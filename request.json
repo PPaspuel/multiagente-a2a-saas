@@ -1,0 +1,15 @@
+{
+    "jsonrpc": "2.0",
+    "id": "test-1",
+    "method": "tasks.create",
+    "params": {
+        "input": {
+            "content": [
+                {
+                    "type": "text/plain",
+                    "text": "This SaaS contract grants the user the right to access the platform. The user must keep their password secure. The user is prohibited from sharing their account."
+                }
+            ]
+        }
+    }
+}
