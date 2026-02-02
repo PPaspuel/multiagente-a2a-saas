@@ -1,0 +1,15 @@
+crewai[tools]
+crewai[a2a]
+python-dotenv
+uvicorn
+google-adk
+google-adk[a2a]
+fastapi
+litellm
+langchain 
+langchain-openai
+google-adk[extensions]
+PyPDF2
+mcp-server-qdrant
+python-a2a
+langchain-google-genai
