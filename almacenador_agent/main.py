@@ -30,7 +30,7 @@ def create_agent_card(public_url=None):
     permitiendo que otros agentes sepan cómo interactuar con él.
     
     Args:
-        public_url: URL pública del agente (ej: http://localhost:8001 o http://192.168.1.100:8001)
+        public_url: URL pública del agente (ej: http://localhost:8001)
         
     Returns:
         AgentCard: Tarjeta de configuración del agente
@@ -125,9 +125,6 @@ def main():
         public_url = os.getenv('PUBLIC_URL', f'http://localhost:{port}')
         
         logger.info(f"🔧 Configuración del servidor:")
-        logger.info(f"   - Host de escucha: {host}")
-        logger.info(f"   - Puerto: {port}")
-        logger.info(f"   - URL pública: {public_url}")
         
         # Crear la tarjeta del agente CON LA URL PÚBLICA
         agent_card = create_agent_card(public_url=public_url)
@@ -150,8 +147,6 @@ def main():
         logger.info(f"📍 Servidor escuchando en: http://{host}:{port}")
         logger.info(f"🌐 URL pública: {public_url}")
         logger.info(f"📋 Agent Card: {public_url}/.well-known/agent-card.json")
-        logger.info(f"")
-        logger.info(f"⚠️  IMPORTANTE: Asegúrate de que el agente cliente use la URL: {public_url}")
         
         uvicorn.run(server.build(), host=host, port=port)
         

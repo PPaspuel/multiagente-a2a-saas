@@ -4,9 +4,6 @@ Este agente procesa PDFs y los almacena en Qdrant.
 """
 
 from google.adk.agents import Agent
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
-from mcp import StdioServerParameters
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.memory import InMemoryMemoryService
@@ -14,27 +11,12 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.models.lite_llm import LiteLlm
 from dotenv import load_dotenv
 import os
-import sys
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv()
 
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME")
-
-# Validar que todas las variables estén configuradas
-if not QDRANT_URL or not COLLECTION_NAME or not QDRANT_API_KEY:
-    raise RuntimeError(
-        "ERROR: Faltan variables de entorno de Qdrant.\n"
-        "Verifica que estén configuradas: QDRANT_URL, QDRANT_API_KEY, COLLECTION_NAME"
-    )
-
-logger.info(f"✓ Configuración de Qdrant cargada correctamente")
-logger.info(f"  - URL: {QDRANT_URL}")
-logger.info(f"  - Colección: {COLLECTION_NAME}")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not OPENROUTER_API_KEY:
@@ -67,8 +49,7 @@ root_agent = Agent(
        - Fragmentas el texto en chunks de tamaño apropiado (1000 caracteres)
        - Creas embeddings semánticos de cada fragmento
        - Almacenas los fragmentos en la colección de Qdrant configurada
-       - Usas las herramientas MCP de Qdrant disponibles
-    
+
     4. FORMATO DE RESPUESTA:
        - SIEMPRE devuelves respuestas en formato JSON estructurado
        - Incluyes información sobre el resultado de la operación
@@ -100,26 +81,7 @@ root_agent = Agent(
     - No agregues explicaciones adicionales fuera del JSON
     - Si hay un error, devuelve un JSON con status "error"
     """,
-    
-    # Herramientas disponibles para el agente
-    tools=[
-        # Conexión al servidor MCP de Qdrant
-        McpToolset(
-            connection_params=StdioConnectionParams(
-                server_params=StdioServerParameters(
-                    # Lanzar el servidor MCP vía el intérprete de Python para mayor portabilidad
-                    command=sys.executable,
-                    args=["-m", "mcp_server_qdrant.main", "--transport", "stdio"],
-                    env={**os.environ,
-                         "QDRANT_URL": QDRANT_URL,
-                         "QDRANT_API_KEY": QDRANT_API_KEY,
-                         "COLLECTION_NAME": COLLECTION_NAME,
-                    }
-                ),
-                timeout=60,  # Aumentado a 60s para dar más tiempo en entornos lentos
-            ),
-        )
-    ],
+    tools=[],
 )
 
 logger.info(f"✓ Agente '{root_agent.name}' configurado correctamente")
@@ -151,14 +113,12 @@ def get_agent_info() -> dict:
     return {
         "agent_name": root_agent.name,
         "model": root_agent.model.__class__.__name__,
-        "qdrant_collection": COLLECTION_NAME,
         "tools_count": len(root_agent.tools),
         "app_name": almacenador_agent_runner.app_name
     }
 
 
 if __name__ == "__main__":
-    # Prueba de configuración cuando se ejecuta directamente
     info = get_agent_info()
     print("\n" + "="*50)
     print("CONFIGURACIÓN DEL AGENTE ALMACENADOR")
