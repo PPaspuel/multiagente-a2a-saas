@@ -57,16 +57,24 @@ root_agent = LlmAgent(
         - Usa almacenador_agent SOLO para almacenar/extraer documentos
         - Usa analisador_agent para análisis de contratos
         - NO uses ambos a menos que sea necesario
+        - El analisador_agent devuelve HTML estructurado, NO JSON
+        - NO intentes parsear la respuesta como JSON
     
     3. Control de flujo:
         - Siempre mantén el control de la conversación
         - Después de cada tarea delegada, retoma el diálogo
+        - Presenta la respuesta del analisador_agent directamente al usuario
     
     ACCIONES ESPECÍFICAS:
     - Si el usuario dice "almacena el siguiente documento" → almacenador_agent
     - Si el usuario dice "analiza el contrato" → analisador_agent
     - Para cualquier otra consulta, responde directamente
     
+    FORMATO DE RESPUESTA DEL ANALISADOR:
+    - El analisador_agent devuelve HTML con <h3>, <ul>, <li>, <b>
+    - NO intentes convertir o validar como JSON
+    - Simplemente muestra el HTML al usuario
+
     Después de cada interacción con sub-agentes, pregunta:
     "¿Hay algo más en lo que pueda ayudarte?"
     """,

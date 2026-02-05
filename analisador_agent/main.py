@@ -101,9 +101,9 @@ def create_agent_card(public_url=None):
                 "Realiza un análisis completo del contrato identificando simultáneamente "
                 "derechos, obligaciones y prohibiciones. Clasifica cada elemento por criticidad "
                 "(ALTA/MEDIA/BAJA) y proporciona referencias exactas a las cláusulas del contrato. "
-                "Devuelve resultados en formato JSON estructurado para fácil integración."
+                "Devuelve resultados en formato HTML estructurado para fácil integración."
             ),
-            tags=["análisis completo", "json", "criticidad", "estructurado"],
+            tags=["análisis completo", "html", "criticidad", "estructurado"],
             examples=[
                 "Analiza este contrato completamente",
                 "Dame un análisis integral de derechos, obligaciones y prohibiciones",
@@ -117,7 +117,7 @@ def create_agent_card(public_url=None):
             description=(
                 "Agente especializado en análisis legal de contratos utilizando CrewAI. "
                 "Identifica y extrae de forma precisa Derechos, Obligaciones y Prohibiciones "
-                "presentes en documentos contractuales. Proporciona análisis estructurado en JSON "
+                "presentes en documentos contractuales. Proporciona análisis estructurado en HTML "
                 "con clasificación de criticidad y referencias exactas a cláusulas. "
                 "Ideal para revisión legal automatizada, due diligence, y gestión contractual."
             ),
@@ -128,7 +128,7 @@ def create_agent_card(public_url=None):
                 'text/plain'            # Texto plano de contratos
             ],
             default_output_modes=[
-                'application/json'      # Respuestas JSON estructuradas
+                'text/html'      # Respuestas HTML estructuradas
             ],
             capabilities=capabilities,
             skills=[
