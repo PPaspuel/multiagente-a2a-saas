@@ -24,7 +24,7 @@ if not OPENROUTER_API_KEY:
 
 root_agent = Agent(
     model=LiteLlm(
-        model="openrouter/anthropic/claude-3-haiku",
+        model="openrouter/meta-llama/llama-4-maverick",
         api_key=OPENROUTER_API_KEY,
         api_base="https://openrouter.ai/api/v1"
     ),
