@@ -5,7 +5,6 @@ Conecta el agente CrewAI con el servidor A2A.
 
 import logging
 import base64
-import json
 from typing import Optional, List
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -104,7 +103,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
     2. Extrae archivos PDF adjuntos
     3. Extrae texto del PDF usando PyPDF2
     4. Ejecuta el análisis con CrewAI
-    5. Devuelve resultados en formato JSON estructurado
+    5. Devuelve resultados en formato HTML estructurado
     """
     
     def __init__(self):
@@ -204,9 +203,9 @@ class ContractAnalyzerExecutor(AgentExecutor):
             logger.info(f"📊 Resultado: {analysis_result[:200]}...")
             
             # ==========================================
-            # PASO 4: Validar y limpiar JSON
+            # PASO 4: Preparar respuesta HTML
             # ==========================================
-            json_result = self._validate_json_response(analysis_result)
+            html_result = analysis_result  # El resultado ya viene en HTML desde CrewAI
             
             # ==========================================
             # PASO 5: Enviar respuesta
@@ -218,42 +217,40 @@ class ContractAnalyzerExecutor(AgentExecutor):
                 ])
             )
             
-            # Enviar resultado como artefacto
+            # Enviar resultado HTML como artefacto
             await updater.add_artifact([
-                Part(root=TextPart(text=json_result))
+                Part(root=TextPart(text=html_result))
             ])
             
             # Completar tarea
             await updater.complete()
             
             # Enviar al event queue
-            await event_queue.enqueue_event(new_agent_text_message(json_result))
+            await event_queue.enqueue_event(new_agent_text_message(html_result))
             
             logger.info("✅ Ejecución completada exitosamente")
             
         except Exception as e:
             logger.error(f'❌ Error durante la ejecución: {str(e)}', exc_info=True)
             
-            # Crear respuesta de error en JSON
-            error_response = {
-                "status": "error",
-                "operation": "analyze_contract",
-                "message": str(e),
-                "data": None
-            }
-            
-            error_json = json.dumps(error_response, indent=2, ensure_ascii=False)
+            # Crear respuesta de error en HTML
+            error_html = f"""
+<h3>❌ Error en el Análisis</h3>
+<p><b>Operación:</b> Análisis de Contrato</p>
+<p><b>Error:</b> {str(e)}</p>
+<p><b>Tipo:</b> {type(e).__name__}</p>
+"""
             
             # Actualizar estado como fallido
             try:
                 await updater.fail(
                     message=updater.new_agent_message([
-                        Part(root=TextPart(text=error_json))
+                        Part(root=TextPart(text=error_html))
                     ])
                 )
             except:
                 # Si falla el updater, enviar directamente
-                await event_queue.enqueue_event(new_agent_text_message(error_json))
+                await event_queue.enqueue_event(new_agent_text_message(error_html))
             
             raise ServerError(error=InternalError()) from e
     
@@ -323,50 +320,6 @@ class ContractAnalyzerExecutor(AgentExecutor):
         
         return None
     
-    def _validate_json_response(self, response: str) -> str:
-        """
-        Valida y limpia la respuesta JSON del agente.
-        
-        Args:
-            response: Respuesta del agente (puede tener texto extra)
-            
-        Returns:
-            str: JSON válido y limpio
-        """
-        try:
-            # Intentar parsear directamente
-            json.loads(response)
-            return response
-            
-        except json.JSONDecodeError:
-            # Si falla, buscar JSON dentro del texto
-            logger.warning("⚠️ Respuesta no es JSON válido, intentando extraer...")
-            
-            # Buscar inicio y fin de objeto JSON
-            start_idx = response.find('{')
-            end_idx = response.rfind('}')
-            
-            if start_idx != -1 and end_idx != -1:
-                json_str = response[start_idx:end_idx+1]
-                
-                # Intentar parsear
-                try:
-                    json.loads(json_str)
-                    logger.info("✅ JSON extraído y validado")
-                    return json_str
-                except:
-                    pass
-            
-            # Si todo falla, crear JSON de error
-            logger.error("❌ No se pudo extraer JSON válido de la respuesta")
-            error_response = {
-                "status": "error",
-                "operation": "analyze_contract",
-                "message": "El agente no devolvió un JSON válido",
-                "raw_response": response[:500]
-            }
-            return json.dumps(error_response, indent=2, ensure_ascii=False)
-    
     async def cancel(
         self,
         context: RequestContext,
@@ -381,14 +334,14 @@ class ContractAnalyzerExecutor(AgentExecutor):
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             await updater.cancel()
             
-            cancel_response = {
-                "status": "cancelled",
-                "operation": "analyze_contract",
-                "message": "La operación ha sido cancelada por el usuario."
-            }
+            cancel_html = """
+<h3>⚠️ Operación Cancelada</h3>
+<p><b>Operación:</b> Análisis de Contrato</p>
+<p><b>Mensaje:</b> La operación ha sido cancelada por el usuario.</p>
+"""
             
             await event_queue.enqueue_event(
-                new_agent_text_message(json.dumps(cancel_response, indent=2, ensure_ascii=False))
+                new_agent_text_message(cancel_html)
             )
             
         except Exception as e:

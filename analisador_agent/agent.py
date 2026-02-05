@@ -22,7 +22,6 @@ if not OPENROUTER_API_KEY:
 # ============================================
 # CONFIGURACIÓN DEL MODELO LLM
 # ============================================
-#from langchain_openai import ChatOpenAI
 
 llm = LLM(
     model="openrouter/anthropic/claude-3-haiku",
@@ -73,14 +72,15 @@ pdf_extractor_agent = Agent(
 
 
 # ============================================
-# AGENTE FORMATEADOR DE RESPUESTAS JSON
+# AGENTE FORMATEADOR DE RESPUESTAS HTML
 # ============================================
-json_formatter_agent = Agent(
-    role='Estructurador de Datos JSON',
-    goal='Convertir el análisis legal en un formato JSON perfectamente estructurado y válido',
+html_formatter_agent = Agent(
+    role='Estructurador de Reportes HTML',
+    goal='Convertir el análisis legal en un reporte HTML limpio, legible',
     backstory="""Eres un experto en estructuración de datos.
-    Tomas información legal compleja y la transformas en JSON limpio, válido y bien organizado.
-    Nunca incluyes texto adicional fuera del JSON, y siempre validas que la estructura sea correcta.""",
+    Tomas información legal compleja y la transformas en HTML limpio y profesional.
+    Usas etiquetas semánticas como <h3>, <ul>, <li>, <b>, <p> para crear reportes claros y legibles.
+    Nunca incluyes estilos inline complejos, solo HTML estructural simple.""",
     verbose=True,
     allow_delegation=False,
     llm=llm
@@ -175,60 +175,65 @@ Para cada elemento identificado, proporciona:
 
 def create_formatting_task() -> Task:
     """
-    Crea la tarea de formateo JSON de los resultados.
+    Crea la tarea de formateo HTML de los resultados.
     
     Returns:
         Task: Tarea de formateo
     """
     return Task(
-        description="""Convierte el análisis legal anterior en un JSON perfectamente estructurado.
+        description="""Convierte el análisis legal anterior en un reporte HTML limpio y estructurado.
 
 ESTRUCTURA JSON REQUERIDA:
-{
-  "status": "success",
-  "operation": "analyze_contract",
-  "data": {
-    "derechos": [
-      {
-        "parte": "Nombre de la parte",
-        "descripcion": "Descripción del derecho",
-        "referencia": "Cláusula X.Y",
-        "criticidad": "ALTA/MEDIA/BAJA"
-      }
-    ],
-    "obligaciones": [
-      {
-        "parte": "Nombre de la parte",
-        "descripcion": "Descripción de la obligación",
-        "referencia": "Cláusula X.Y",
-        "criticidad": "ALTA/MEDIA/BAJA"
-      }
-    ],
-    "prohibiciones": [
-      {
-        "parte": "Nombre de la parte",
-        "descripcion": "Descripción de la prohibición",
-        "referencia": "Cláusula X.Y",
-        "criticidad": "ALTA/MEDIA/BAJA"
-      }
-    ],
-    "resumen": {
-      "total_derechos": 0,
-      "total_obligaciones": 0,
-      "total_prohibiciones": 0,
-      "elementos_criticos": 0
-    }
-  }
-}
+<h3>📋 Análisis de Contrato</h3>
+
+<h3>✅ Derechos Identificados</h3>
+<ul>
+  <li>
+    <b>Parte:</b> Nombre de la parte<br>
+    <b>Descripción:</b> Descripción del derecho<br>
+    <b>Referencia:</b> Cláusula X.Y<br>
+    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+  </li>
+</ul>
+
+<h3>📌 Obligaciones Identificadas</h3>
+<ul>
+  <li>
+    <b>Parte:</b> Nombre de la parte<br>
+    <b>Descripción:</b> Descripción de la obligación<br>
+    <b>Referencia:</b> Cláusula X.Y<br>
+    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+  </li>
+</ul>
+
+<h3>🚫 Prohibiciones Identificadas</h3>
+<ul>
+  <li>
+    <b>Parte:</b> Nombre de la parte<br>
+    <b>Descripción:</b> Descripción de la prohibición<br>
+    <b>Referencia:</b> Cláusula X.Y<br>
+    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+  </li>
+</ul>
+
+<h3>📊 Resumen</h3>
+<ul>
+  <li><b>Total Derechos:</b> X</li>
+  <li><b>Total Obligaciones:</b> X</li>
+  <li><b>Total Prohibiciones:</b> X</li>
+  <li><b>Elementos Críticos:</b> X</li>
+</ul>
+
 
 REGLAS ESTRICTAS:
-1. Devuelve SOLO el JSON, sin texto adicional
+1. Devuelve SOLO el HTML, sin texto adicional antes o después
 2. No uses comillas triples ni markdown
-3. Asegura que el JSON sea válido
+3. Usa solo etiquetas simples: <h3>, <ul>, <li>, <b>, <br>, <p>
 4. Incluye todos los elementos identificados en el análisis previo
+5. Usa emojis en los títulos para mejor visualización
 """,
-        expected_output="JSON válido y bien estructurado con el análisis completo del contrato",
-        agent=json_formatter_agent
+        expected_output="HTML válido y bien estructurado con el análisis completo del contrato",
+        agent=html_formatter_agent
     )
 
 
@@ -244,7 +249,7 @@ def analyze_contract(pdf_content: str) -> str:
         pdf_content: Contenido de texto del PDF del contrato
         
     Returns:
-        str: Resultado del análisis en formato JSON
+        str: Resultado del análisis en formato HTML
     """
     try:
         logger.info("🔍 Iniciando análisis de contrato con CrewAI...")
@@ -259,7 +264,7 @@ def analyze_contract(pdf_content: str) -> str:
             agents=[
                 pdf_extractor_agent,
                 contract_analyzer_agent,
-                json_formatter_agent
+                html_formatter_agent
             ],
             tasks=[
                 extraction_task,
@@ -287,15 +292,13 @@ def analyze_contract(pdf_content: str) -> str:
         logger.error(f"❌ Error durante el análisis: {str(e)}", exc_info=True)
         
         # Devolver JSON de error
-        error_json = {
-            "status": "error",
-            "operation": "analyze_contract",
-            "message": f"Error durante el análisis: {str(e)}",
-            "data": None
-        }
-        
-        import json
-        return json.dumps(error_json, indent=2, ensure_ascii=False)
+        # Devolver HTML de error
+        error_html = f"""
+        <h3>❌ Error en el Análisis</h3>
+        <p><b>Operación:</b> Análisis de Contrato</p>
+        <p><b>Mensaje:</b> {str(e)}</p>
+        """
+        return error_html
 
 
 # ============================================
@@ -314,14 +317,14 @@ def get_agent_info() -> dict:
         "agents": [
             contract_analyzer_agent.role,
             pdf_extractor_agent.role,
-            json_formatter_agent.role
+            html_formatter_agent.role
         ],
         "capabilities": [
             "Extracción de derechos",
             "Extracción de obligaciones",
             "Extracción de prohibiciones",
             "Análisis de criticidad",
-            "Formato JSON estructurado"
+            "Formato HTML estructurado"
         ]
     }
 
