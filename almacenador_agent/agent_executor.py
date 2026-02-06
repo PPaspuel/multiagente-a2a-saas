@@ -5,6 +5,7 @@ VERSIÓN MEJORADA: Almacenamiento directo a Qdrant desplegada en Docker.
 
 import logging
 import base64
+import json
 from typing import Optional, List
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -29,7 +30,6 @@ from almacenador_agent.tools_agent import (
     validate_pdf_content,
     get_pdf_metadata
 )
-# ⭐ NUEVO: Importar el gestor de almacenamiento directo
 from almacenador_agent.qdrant_storage import storage_manager
 
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +41,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
     Ejecutor del agente almacenador.
     
     VERSIÓN MEJORADA:
-    - Almacenamiento DIRECTO a Qdrant (sin MCP problemático)
+    - Almacenamiento DIRECTO a Qdrant 
     - Procesamiento más rápido y confiable
     - Mejor manejo de errores
     
@@ -139,7 +139,6 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             
             # ==========================================
             # PASO 3: FRAGMENTAR TEXTO
-            # ⭐ NUEVO: Fragmentación directa sin pasar por el agente
             # ==========================================
             await updater.update_status(
                 TaskState.working,
@@ -158,7 +157,6 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             
             # ==========================================
             # PASO 4: ALMACENAR DIRECTAMENTE EN QDRANT
-            # ⭐ CAMBIO PRINCIPAL: Ya no usa MCP, almacena directo
             # ==========================================
             await updater.update_status(
                 TaskState.working,
@@ -189,7 +187,11 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                     total_characters=len(pdf_text),
                     collection_name=storage_result["collection"]
                 )
-                
+
+                response_dict = json.loads(json_response)
+                html_response = self.response_formatter.render_storage_response_html(
+                    response_dict
+                )
                 # Actualizar estado
                 await updater.update_status(
                     TaskState.working,
@@ -217,8 +219,12 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             # ==========================================
             # PASO 6: ENVIAR RESPUESTA Y COMPLETAR
             # ==========================================
-            logger.info(f"📤 Enviando respuesta JSON...")
+            logger.info(f"📤 Enviando respuesta HTML...")
             
+            await event_queue.enqueue_event(
+                new_agent_text_message(html_response)
+            )
+
             # Enviar respuesta como artefacto
             await updater.add_artifact([
                 Part(root=TextPart(text=json_response))
@@ -228,7 +234,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             await updater.complete()
             
             # Enviar al event queue
-            await event_queue.enqueue_event(new_agent_text_message(json_response))
+            await event_queue.enqueue_event(new_agent_text_message(html_response))
             
             logger.info("✅ Ejecución completada exitosamente")
             

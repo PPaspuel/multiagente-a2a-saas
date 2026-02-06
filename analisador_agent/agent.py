@@ -221,7 +221,6 @@ ESTRUCTURA JSON REQUERIDA:
   <li><b>Total Derechos:</b> X</li>
   <li><b>Total Obligaciones:</b> X</li>
   <li><b>Total Prohibiciones:</b> X</li>
-  <li><b>Elementos Críticos:</b> X</li>
 </ul>
 
 

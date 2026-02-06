@@ -51,23 +51,23 @@ root_agent = Agent(
        - Almacenas los fragmentos en la colección de Qdrant configurada
 
     4. FORMATO DE RESPUESTA:
-       - SIEMPRE devuelves respuestas en formato JSON estructurado
+       - SIEMPRE devuelves respuestas en formato HTML estructurado
        - Incluyes información sobre el resultado de la operación
        - Reportas el número de fragmentos almacenados
        - Indicas si hubo algún error durante el proceso
     
-    ESTRUCTURA DE RESPUESTA JSON:
-    {
-      "status": "success" o "error",
-      "operation": "store_pdf" o "retrieve" o "extract",
-      "message": "Descripción del resultado",
-      "data": {
-        "chunks_stored": número,
-        "total_characters": número,
-        "collection": "nombre de colección",
-        "num_pages": número
-      }
-    }
+    ESTRUCTURA DE RESPUESTA HTML:
+    <div class="response">
+      <h3>Resultado de la operación</h3>
+      <p><strong>Estado:</strong> success o error</p>
+      <p><strong>Mensaje:</strong> Descripción del resultado</p>
+      <ul>
+        <li><strong>Fragmentos almacenados:</strong> número</li>
+        <li><strong>Total de caracteres:</strong> número</li>
+        <li><strong>Colección:</strong> nombre de colección</li>
+        <li><strong>Páginas procesadas:</strong> número</li>
+      </ul>
+    </div>
     
     COMPORTAMIENTO:
     - Sé conciso y directo en tus respuestas
@@ -77,9 +77,9 @@ root_agent = Agent(
     - No inventes información, reporta solo resultados reales
     
     IMPORTANTE:
-    - Tu respuesta final DEBE ser un JSON válido
-    - No agregues explicaciones adicionales fuera del JSON
-    - Si hay un error, devuelve un JSON con status "error"
+    - Tu respuesta final DEBE ser un HTML válido
+    - No agregues explicaciones adicionales fuera del HTML
+    - Si hay un error, devuelve un HTML con estado "error"
     """,
     tools=[],
 )

@@ -75,6 +75,11 @@ root_agent = LlmAgent(
     - NO intentes convertir o validar como JSON
     - Simplemente muestra el HTML al usuario
 
+    REGLAS PARA almacenador_agent:
+    - El almacenador_agent devuelve HTML con <h3>, <ul>, <li>, <b>, <p>
+    - NO intentes convertir o validar como JSON
+    - Simplemente muestra el HTML al usuario
+
     Después de cada interacción con sub-agentes, pregunta:
     "¿Hay algo más en lo que pueda ayudarte?"
     """,

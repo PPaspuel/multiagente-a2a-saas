@@ -178,7 +178,7 @@ class ResponseFormatter:
             collection_name: Nombre de la colección en Qdrant
             
         Returns:
-            str: JSON con información del almacenamiento
+            str: HTML con información del almacenamiento
         """
         data = {
             "chunks_stored": num_chunks,
@@ -192,6 +192,23 @@ class ResponseFormatter:
             data=data,
             message=f"PDF almacenado exitosamente en {num_chunks} fragmentos"
         )
+    
+    def render_storage_response_html(self, response: dict) -> str:
+        return f"""
+            <h3>📄 Reporte de almacenamiento</h3>
+
+            <p><b>Estado:</b> {response.get("status")}</p>
+            <p><b>Operación:</b> {response.get("operation")}</p>
+
+            <p>{response.get("message")}</p>
+
+            <h3>📊 Detalles del proceso</h3>
+            <ul>
+                <li><b>Fragmentos almacenados:</b> {response["data"]["chunks_stored"]}</li>
+                <li><b>Total de caracteres:</b> {response["data"]["total_characters"]}</li>
+                <li><b>Colección:</b> {response["data"]["collection"]}</li>
+            </ul>
+        """
 
 # FUNCIONES DE UTILIDAD
 def validate_pdf_content(content: bytes) -> bool:
