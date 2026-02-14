@@ -1,6 +1,10 @@
 """
 Ejecutor del agente almacenador para el protocolo A2A.
-VERSIÓN MEJORADA: Almacenamiento directo a Qdrant desplegada en Docker.
+VERSIÓN CORREGIDA:
+- Deduplicación automática de documentos
+- Almacenamiento de análisis vinculados
+- Recuperación de análisis almacenados
+- FIX: Removido uso de updater.fail() que no existe
 """
 
 import logging
@@ -41,16 +45,15 @@ class AlmacenadorAgentExecutor(AgentExecutor):
     Ejecutor del agente almacenador.
     
     VERSIÓN MEJORADA:
-    - Almacenamiento DIRECTO a Qdrant 
-    - Procesamiento más rápido y confiable
-    - Mejor manejo de errores
+    - Deduplicación automática de documentos
+    - Almacenamiento directo a Qdrant 
+    - Almacenamiento de análisis vinculados a documentos
+    - Recuperación de análisis almacenados
     
-    Flujo:
-    1. Recibe requests del protocolo A2A
-    2. Extrae archivos PDF y texto
-    3. Procesa PDFs (extracción + fragmentación)
-    4. Almacena DIRECTAMENTE en Qdrant
-    5. Devuelve respuestas en formato JSON
+    Flujo de operaciones:
+    1. ALMACENAR PDF: Recibe PDF, detecta duplicados, almacena/actualiza
+    2. ALMACENAR ANÁLISIS: Recibe análisis en texto y lo vincula al documento
+    3. RECUPERAR ANÁLISIS: Busca y muestra análisis almacenados
     """
     
     def __init__(self):
@@ -68,9 +71,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         """
         Ejecuta el agente para procesar la solicitud.
         
-        CAMBIO PRINCIPAL:
-        - Ya NO usa el agente con herramientas MCP
-        - Ahora almacena DIRECTAMENTE en Qdrant
+        TIPOS DE OPERACIÓN:
+        1. Almacenar PDF (con deduplicación automática)
+        2. Almacenar análisis (requiere document_id o referencia)
+        3. Recuperar análisis (por document_id o búsqueda general)
         """
         
         logger.info(f"🚀 Iniciando ejecución del agente almacenador")
@@ -113,128 +117,39 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             logger.info(f"📦 Número de partes: {len(user_parts)}")
             
             # ==========================================
-            # PASO 2: PROCESAR ARCHIVOS PDF
+            # PASO 2: DETERMINAR TIPO DE OPERACIÓN
             # ==========================================
-            await updater.update_status(
-                TaskState.working,
-                message=updater.new_agent_message([
-                    Part(root=TextPart(text="📄 Procesando archivos PDF..."))
-                ])
-            )
+            operation_type = self._detect_operation_type(user_text, user_parts)
+            logger.info(f"🎯 Operación detectada: {operation_type}")
             
-            pdf_text = await self._process_pdf_files(user_parts)
+            # Ejecutar operación correspondiente
+            if operation_type == "store_pdf":
+                await self._handle_store_pdf(updater, event_queue, user_parts, user_text, context)
             
-            if not pdf_text:
-                # Si no hay PDF, informar al usuario
-                error_msg = "❌ No se recibió ningún archivo PDF para procesar."
+            elif operation_type == "store_analysis":
+                await self._handle_store_analysis(updater, event_queue, user_text, context)
+            
+            elif operation_type == "retrieve_analysis":
+                await self._handle_retrieve_analysis(updater, event_queue, user_text)
+            
+            else:
+                # Operación no reconocida
+                error_msg = (
+                    "❌ No se pudo determinar la operación solicitada.\n\n"
+                    "Operaciones disponibles:\n"
+                    "1. 📄 Almacenar PDF: Envía un archivo PDF\n"
+                    "2. 💾 Almacenar análisis: Envía texto con 'almacena el análisis' + document_id + análisis\n"
+                    "3. 🔍 Recuperar análisis: Envía 'recupera el análisis' o 'muestra el análisis'"
+                )
+                
+                # FIX: Usar update_status en lugar de fail
                 await updater.update_status(
                     TaskState.failed,
                     message=updater.new_agent_message([
                         Part(root=TextPart(text=error_msg))
                     ])
                 )
-                raise ValueError(error_msg)
-            
-            logger.info(f"✅ PDF procesado: {len(pdf_text)} caracteres")
-            
-            # ==========================================
-            # PASO 3: FRAGMENTAR TEXTO
-            # ==========================================
-            await updater.update_status(
-                TaskState.working,
-                message=updater.new_agent_message([
-                    Part(root=TextPart(text="✂️ Fragmentando texto en chunks..."))
-                ])
-            )
-            
-            chunks = self.pdf_processor.chunk_text(
-                text=pdf_text,
-                chunk_size=1000,
-                overlap=200
-            )
-            
-            logger.info(f"✂️ Texto fragmentado en {len(chunks)} chunks")
-            
-            # ==========================================
-            # PASO 4: ALMACENAR DIRECTAMENTE EN QDRANT
-            # ==========================================
-            await updater.update_status(
-                TaskState.working,
-                message=updater.new_agent_message([
-                    Part(root=TextPart(text=f"💾 Almacenando {len(chunks)} fragmentos en Qdrant..."))
-                ])
-            )
-            
-            # Almacenar usando el gestor directo
-            storage_result = storage_manager.store_chunks(
-                chunks=chunks,
-                metadata={
-                    "task_id": context.task_id,
-                    "origen": "a2a_upload",
-                    "user_query": user_text[:200] if user_text else "Sin consulta"
-                }
-            )
-            
-            # ==========================================
-            # PASO 5: PREPARAR Y ENVIAR RESPUESTA JSON
-            # ==========================================
-            if storage_result["status"] == "success":
-                logger.info(f"✅ {storage_result['chunks_stored']} fragmentos almacenados exitosamente")
-                
-                # Crear respuesta JSON exitosa
-                json_response = self.response_formatter.format_storage_response(
-                    num_chunks=storage_result["chunks_stored"],
-                    total_characters=len(pdf_text),
-                    collection_name=storage_result["collection"]
-                )
-
-                response_dict = json.loads(json_response)
-                html_response = self.response_formatter.render_storage_response_html(
-                    response_dict
-                )
-                # Actualizar estado
-                await updater.update_status(
-                    TaskState.working,
-                    message=updater.new_agent_message([
-                        Part(root=TextPart(text="✅ Almacenamiento completado exitosamente"))
-                    ])
-                )
-                
-            else:
-                # Error en almacenamiento
-                logger.error(f"❌ Error en almacenamiento: {storage_result.get('message')}")
-                json_response = self.response_formatter.format_error_response(
-                    operation="store_pdf",
-                    error_message=storage_result.get("message", "Error desconocido en almacenamiento"),
-                    error_type="StorageError"
-                )
-                
-                await updater.update_status(
-                    TaskState.working,
-                    message=updater.new_agent_message([
-                        Part(root=TextPart(text="⚠️ Error durante el almacenamiento"))
-                    ])
-                )
-            
-            # ==========================================
-            # PASO 6: ENVIAR RESPUESTA Y COMPLETAR
-            # ==========================================
-            logger.info(f"📤 Enviando respuesta HTML...")
-            
-            await event_queue.enqueue_event(
-                new_agent_text_message(html_response)
-            )
-
-            # Enviar respuesta como artefacto
-            await updater.add_artifact([
-                Part(root=TextPart(text=json_response))
-            ])
-            
-            # Completar la tarea
-            await updater.complete()
-            
-            # Enviar al event queue
-            await event_queue.enqueue_event(new_agent_text_message(html_response))
+                await event_queue.enqueue_event(new_agent_text_message(error_msg))
             
             logger.info("✅ Ejecución completada exitosamente")
             
@@ -248,37 +163,395 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                 error_type=type(e).__name__
             )
             
-            # Actualizar estado de la tarea como fallida
+            # FIX: Enviar error directamente sin usar updater.fail()
             try:
-                await updater.fail(
+                await updater.update_status(
+                    TaskState.failed,
                     message=updater.new_agent_message([
                         Part(root=TextPart(text=error_response))
                     ])
                 )
-            except:
-                # Si falla el updater, enviar directamente al event queue
-                await event_queue.enqueue_event(new_agent_text_message(error_response))
+            except Exception as update_error:
+                logger.error(f"Error actualizando estado: {update_error}")
+            
+            # Enviar al event queue
+            await event_queue.enqueue_event(new_agent_text_message(error_response))
             
             raise ServerError(error=InternalError()) from e
     
     
-    async def _process_pdf_files(self, user_parts: List[Part]) -> Optional[str]:
+    def _detect_operation_type(self, user_text: str, user_parts: List[Part]) -> str:
+        """
+        Detecta el tipo de operación solicitada por el usuario.
+        
+        Returns:
+            str: "store_pdf", "store_analysis", "retrieve_analysis", "unknown"
+        """
+        user_text_lower = user_text.lower()
+        
+        # Verificar si hay archivos PDF
+        has_pdf = any(
+            isinstance(getattr(part, 'root', None), FilePart)
+            for part in user_parts
+        )
+        
+        # Palabras clave para almacenar análisis
+        store_analysis_keywords = [
+            "almacena el análisis", "guarda el análisis",
+            "guarda el análisis", "store analysis", "save analysis"
+        ]
+        
+        # Palabras clave para recuperar análisis
+        retrieve_analysis_keywords = [
+            "recupera el análisis", "muestra el análisis", "ver el análisis",
+            "busca el análisis", "retrieve analysis", "show analysis",
+            "get analysis", "find analysis"
+        ]
+        
+        # Determinar operación
+        if has_pdf:
+            return "store_pdf"
+        
+        if any(keyword in user_text_lower for keyword in store_analysis_keywords):
+            return "store_analysis"
+        
+        if any(keyword in user_text_lower for keyword in retrieve_analysis_keywords):
+            return "retrieve_analysis"
+        
+        return "unknown"
+    
+    
+    async def _handle_store_pdf(
+        self,
+        updater: TaskUpdater,
+        event_queue: EventQueue,
+        user_parts: List[Part],
+        user_text: str,
+        context: RequestContext
+    ):
+        """
+        Maneja el almacenamiento de archivos PDF con deduplicación.
+        """
+        # Procesar archivos PDF
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="📄 Procesando archivos PDF..."))
+            ])
+        )
+        
+        pdf_result = await self._process_pdf_files(user_parts)
+        
+        if not pdf_result:
+            error_msg = "❌ No se recibió ningún archivo PDF para procesar."
+            
+            # FIX: Usar update_status en lugar de fail
+            await updater.update_status(
+                TaskState.failed,
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text=error_msg))
+                ])
+            )
+            await event_queue.enqueue_event(new_agent_text_message(error_msg))
+            raise ValueError(error_msg)
+        
+        pdf_text = pdf_result['text']
+        filename = pdf_result['filename']
+        
+        logger.info(f"✅ PDF procesado: {len(pdf_text)} caracteres")
+        
+        # Fragmentar texto
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="✂️ Fragmentando texto en chunks..."))
+            ])
+        )
+        
+        chunks = self.pdf_processor.chunk_text(
+            text=pdf_text,
+            chunk_size=1000,
+            overlap=200
+        )
+        
+        logger.info(f"✂️ Texto fragmentado en {len(chunks)} chunks")
+        
+        # Almacenar en Qdrant (con deduplicación automática)
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text=f"💾 Almacenando {len(chunks)} fragmentos en Qdrant..."))
+            ])
+        )
+        
+        storage_result = storage_manager.store_chunks(
+            chunks=chunks,
+            full_content=pdf_text,  # Para calcular hash y detectar duplicados
+            filename=filename,
+            metadata={
+                "task_id": context.task_id,
+                "origen": "a2a_upload",
+                "user_query": user_text[:200] if user_text else "Sin consulta"
+            }
+        )
+        
+        # Preparar y enviar respuesta
+        if storage_result["status"] == "success":
+            logger.info(f"✅ {storage_result['chunks_stored']} fragmentos almacenados exitosamente")
+            
+            # Verificar si fue actualización o nuevo almacenamiento
+            was_updated = storage_result.get('was_updated', False)
+            
+            if was_updated:
+                status_msg = "🔄 Documento actualizado (se detectó duplicado)"
+                existing_info = storage_result.get('existing_doc_info', {})
+                additional_info = f"\n\nDocumento original:\n- Archivo: {existing_info.get('filename')}\n- Almacenado: {existing_info.get('stored_at')}"
+            else:
+                status_msg = "✅ Nuevo documento almacenado"
+                additional_info = ""
+            
+            json_response = self.response_formatter.format_storage_response(
+                num_chunks=storage_result["chunks_stored"],
+                total_characters=len(pdf_text),
+                collection_name=storage_result["collection"],
+                document_id=storage_result["document_id"],
+                was_updated=was_updated
+            )
+            
+            response_dict = json.loads(json_response)
+            html_response = self.response_formatter.render_storage_response_html(
+                response_dict
+            ) + additional_info
+            
+            await updater.update_status(
+                TaskState.working,
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text=status_msg))
+                ])
+            )
+            
+        else:
+            logger.error(f"❌ Error en almacenamiento: {storage_result.get('message')}")
+            json_response = self.response_formatter.format_error_response(
+                operation="store_pdf",
+                error_message=storage_result.get("message", "Error desconocido en almacenamiento"),
+                error_type="StorageError"
+            )
+            html_response = f"❌ Error: {storage_result.get('message')}"
+            
+            await updater.update_status(
+                TaskState.working,
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text="⚠️ Error durante el almacenamiento"))
+                ])
+            )
+        
+        # Enviar respuesta
+        await event_queue.enqueue_event(new_agent_text_message(html_response))
+        await updater.add_artifact([Part(root=TextPart(text=json_response))])
+        await updater.complete()
+    
+    
+    async def _handle_store_analysis(
+        self,
+        updater: TaskUpdater,
+        event_queue: EventQueue,
+        user_text: str,
+        context: RequestContext
+    ):
+        """
+        Maneja el almacenamiento de análisis vinculado a un documento.
+        
+        Formato esperado:
+        "Almacena el análisis para documento <document_id>: <contenido del análisis>"
+        o
+        "Guardar análisis: <contenido> [document_id: <id>]"
+        """
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="💾 Procesando solicitud de almacenamiento de análisis..."))
+            ])
+        )
+        
+        # Extraer document_id y contenido del análisis
+        document_id = None
+        analysis_content = None
+        
+        # Buscar patrones comunes
+        import re
+        
+        # Patrón 1: "document_id: <uuid>"
+        doc_id_pattern = r'document_id:\s*([a-f0-9\-]{36})'
+        match = re.search(doc_id_pattern, user_text, re.IGNORECASE)
+        if match:
+            document_id = match.group(1)
+            # Remover la parte del document_id del texto
+            analysis_content = re.sub(doc_id_pattern, '', user_text, flags=re.IGNORECASE).strip()
+        
+        # Patrón 2: "para documento <uuid>"
+        if not document_id:
+            doc_pattern = r'para\s+documento\s+([a-f0-9\-]{36})'
+            match = re.search(doc_pattern, user_text, re.IGNORECASE)
+            if match:
+                document_id = match.group(1)
+                analysis_content = re.sub(doc_pattern, '', user_text, flags=re.IGNORECASE).strip()
+        
+        # Remover palabras clave iniciales
+        if analysis_content:
+            keywords_to_remove = [
+                "almacena el análisis", "guarda el análisis","almacena este análisis",
+                "guarda este análisis", "store analysis", "save analysis"
+            ]
+            for keyword in keywords_to_remove:
+                analysis_content = analysis_content.replace(keyword, "", 1)
+            analysis_content = analysis_content.strip(": ").strip()
+        
+        if not document_id:
+            error_msg = (
+                "❌ No se pudo identificar el document_id.\n\n"
+                "Por favor, especifica el ID del documento de una de estas formas:\n"
+                "1. 'Almacena el análisis para documento <document_id>: <contenido>'\n"
+                "2. 'Guarda el análisis: <contenido> [document_id: <id>]'"
+            )
+            
+            # FIX: Usar update_status en lugar de fail
+            await updater.update_status(
+                TaskState.failed,
+                message=updater.new_agent_message([Part(root=TextPart(text=error_msg))])
+            )
+            await event_queue.enqueue_event(new_agent_text_message(error_msg))
+            return
+        
+        if not analysis_content or len(analysis_content) < 10:
+            error_msg = "❌ El contenido del análisis está vacío o es demasiado corto."
+            
+            # FIX: Usar update_status en lugar de fail
+            await updater.update_status(
+                TaskState.failed,
+                message=updater.new_agent_message([Part(root=TextPart(text=error_msg))])
+            )
+            await event_queue.enqueue_event(new_agent_text_message(error_msg))
+            return
+        
+        # Almacenar el análisis
+        storage_result = storage_manager.store_analysis(
+            document_id=document_id,
+            analysis_content=analysis_content,
+            analysis_type="general",
+            metadata={
+                "task_id": context.task_id,
+                "origen": "a2a_analysis"
+            }
+        )
+        
+        # Preparar respuesta
+        if storage_result["status"] == "success":
+            html_response = f"""
+            <h3>✅ Análisis almacenado exitosamente</h3>
+            
+            <p><b>Documento base ID:</b> {document_id}</p>
+            <p><b>Análisis ID:</b> {storage_result['analysis_id']}</p>
+            <p><b>Tipo:</b> {storage_result['analysis_type']}</p>
+            <p><b>Longitud:</b> {len(analysis_content)} caracteres</p>
+            
+            <h4>Vista previa del análisis:</h4>
+            <p>{analysis_content[:200]}...</p>
+            """
+            
+            json_response = json.dumps(storage_result, indent=2)
+            
+        else:
+            html_response = f"❌ Error almacenando análisis: {storage_result.get('message')}"
+            json_response = json.dumps(storage_result, indent=2)
+        
+        await event_queue.enqueue_event(new_agent_text_message(html_response))
+        await updater.add_artifact([Part(root=TextPart(text=json_response))])
+        await updater.complete()
+    
+    
+    async def _handle_retrieve_analysis(
+        self,
+        updater: TaskUpdater,
+        event_queue: EventQueue,
+        user_text: str
+    ):
+        """
+        Maneja la recuperación de análisis almacenados.
+        
+        Formatos aceptados:
+        - "Recupera el análisis"
+        - "Muestra el análisis del documento <document_id>"
+        - "Ver todos los análisis"
+        """
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="🔍 Buscando análisis almacenados..."))
+            ])
+        )
+        
+        # Buscar document_id en el texto
+        import re
+        doc_id_pattern = r'([a-f0-9\-]{36})'
+        match = re.search(doc_id_pattern, user_text)
+        document_id = match.group(1) if match else None
+        
+        # Recuperar análisis
+        if document_id:
+            logger.info(f"🔍 Buscando análisis para documento: {document_id}")
+            analysis_list = storage_manager.retrieve_analysis(document_id=document_id)
+        else:
+            logger.info(f"🔍 Buscando todos los análisis")
+            analysis_list = storage_manager.retrieve_analysis(limit=20)
+        
+        # Preparar respuesta
+        if not analysis_list:
+            html_response = """
+            <h3>📭 No se encontraron análisis</h3>
+            <p>No hay análisis almacenados que coincidan con tu búsqueda.</p>
+            """
+        else:
+            # Generar HTML con los análisis
+            html_parts = [f"<h3>📊 Análisis encontrados ({len(analysis_list)})</h3>"]
+            
+            for i, analysis in enumerate(analysis_list, 1):
+                html_parts.append(f"""
+                    <h4>Análisis #{i}</h4>
+                    <p><b>Document base ID:</b> {analysis['document_id']}</p>
+                    <p><b>Tipo:</b> {analysis['analysis_type']}</p>
+                    <p><b>Fecha:</b> {analysis['created_at']}</p>
+                    
+                    <h4>Contenido:</h4>
+                        {analysis['analysis_content']}
+                """)
+            
+            html_response = "\n".join(html_parts)
+        
+        # Crear JSON response
+        json_response = json.dumps({
+            "status": "success",
+            "operation": "retrieve_analysis",
+            "count": len(analysis_list),
+            "analysis": analysis_list
+        }, indent=2, ensure_ascii=False)
+        
+        await event_queue.enqueue_event(new_agent_text_message(html_response))
+        await updater.add_artifact([Part(root=TextPart(text=json_response))])
+        await updater.complete()
+    
+    
+    async def _process_pdf_files(self, user_parts: List[Part]) -> Optional[dict]:
         """
         Procesa archivos PDF de la solicitud.
         
-        Args:
-            user_parts: Lista de partes del mensaje del usuario
-            
         Returns:
-            str: Texto extraído del PDF o None si no hay PDF
+            dict: {'text': str, 'filename': str, 'metadata': dict} o None
         """
-        pdf_texts = []
-        
         for part in user_parts:
             if isinstance(part, Part):
                 root = getattr(part, 'root', None)
                 
-                # Verificar si es un archivo
                 if isinstance(root, FilePart):
                     file_obj = getattr(root, 'file', None)
                     
@@ -286,19 +559,16 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                         file_name = ""
                         file_content = None
                         
-                        # Manejar FileWithUri
                         if isinstance(file_obj, FileWithUri):
                             file_name = getattr(file_obj, 'uri', 'archivo.pdf').split('/')[-1]
                             logger.warning(f"⚠️ FileWithUri detectado: {file_name}. Necesita implementación de descarga.")
                             continue
                         
-                        # Manejar FileWithBytes
                         elif isinstance(file_obj, FileWithBytes):
                             file_name = getattr(file_obj, 'filename', 'archivo.pdf')
                             file_bytes = getattr(file_obj, 'bytes', None)
                             
                             if file_bytes:
-                                # Decodificar si es base64 o string
                                 if isinstance(file_bytes, str):
                                     try:
                                         file_content = base64.b64decode(file_bytes)
@@ -307,42 +577,30 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                                 else:
                                     file_content = file_bytes
                         
-                        # Verificar que sea PDF
                         if file_name.lower().endswith('.pdf') and file_content:
                             try:
-                                # Validar PDF
                                 if not validate_pdf_content(file_content):
                                     logger.warning(f"⚠️ El archivo '{file_name}' no es un PDF válido")
                                     continue
                                 
-                                # Obtener metadatos
                                 metadata = get_pdf_metadata(file_content)
                                 logger.info(f"📊 Metadatos del PDF: {metadata}")
                                 
-                                # Extraer texto
                                 text = self.pdf_processor.extract_text_from_pdf(file_content)
                                 
                                 if text and text.strip():
-                                    pdf_texts.append({
+                                    logger.info(f"✅ Texto extraído de '{file_name}': {len(text)} caracteres")
+                                    return {
                                         'filename': file_name,
                                         'text': text,
                                         'metadata': metadata
-                                    })
-                                    logger.info(f"✅ Texto extraído de '{file_name}': {len(text)} caracteres")
+                                    }
                                 else:
                                     logger.warning(f"⚠️ No se pudo extraer texto de '{file_name}'")
                                     
                             except Exception as e:
                                 logger.error(f"❌ Error procesando PDF '{file_name}': {str(e)}")
                                 raise ValueError(f"Error al procesar PDF: {str(e)}")
-        
-        # Combinar textos de todos los PDFs
-        if pdf_texts:
-            combined_text = "\n\n".join([
-                f"=== ARCHIVO: {item['filename']} ===\n{item['text']}"
-                for item in pdf_texts
-            ])
-            return combined_text
         
         return None
     
@@ -352,9 +610,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue
     ) -> None:
-        """
-        Maneja la cancelación de una solicitud.
-        """
+        """Maneja la cancelación de una solicitud."""
         logger.warning("⚠️ Cancelación solicitada")
         
         try:

@@ -31,13 +31,13 @@ analisador_agent = RemoteA2aAgent(
 root_agent = LlmAgent(
     name="orquestador_agent",
     model=LiteLlm(
-        model="openrouter/openai/gpt-5-mini",
+        model="openrouter/openai/gpt-5-nano",
         api_key=OPENROUTER_API_KEY,
         api_base="https://openrouter.ai/api/v1",
         max_retries=2,
         timeout=45,
         temperature=0.3,
-        fallbacks=["openrouter/openai/gpt-4o-mini"],
+        fallbacks=["openrouter/openai/gpt-5-mini"],
     ),
     description=(
         "Agente orquestador que coordina el análisis de contratos SaaS "

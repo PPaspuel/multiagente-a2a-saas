@@ -1,11 +1,13 @@
 """
 Herramientas personalizadas para el agente almacenador.
-Estas funciones permiten procesar archivos PDF y estructurar respuestas.
+VERSIÓN MEJORADA:
+- Soporte para análisis en ResponseFormatter
+- Nuevas funciones de formateo HTML
 """
 
 import json
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 import PyPDF2
 import io
@@ -28,30 +30,19 @@ class PDFProcessor:
             
         Returns:
             str: Texto extraído del PDF, página por página
-            
-        Ejemplo:
-            >>> pdf_bytes = open('documento.pdf', 'rb').read()
-            >>> texto = PDFProcessor.extract_text_from_pdf(pdf_bytes)
         """
         try:
-            # Crear un objeto similar a un archivo desde los bytes
             pdf_file = io.BytesIO(pdf_content)
-            
-            # Leer el PDF
             pdf_reader = PyPDF2.PdfReader(pdf_file)
-            
-            # Lista para almacenar el texto de cada página
             text_pages = []
             
-            # Extraer texto de cada página
             for page_num in range(len(pdf_reader.pages)):
                 page = pdf_reader.pages[page_num]
                 text = page.extract_text()
                 
-                if text.strip():  # Solo agregar si hay texto
+                if text.strip():
                     text_pages.append(f"--- Página {page_num + 1} ---\n{text}")
                     
-            # Unir todo el texto
             full_text = "\n\n".join(text_pages)
             
             logger.info(f"✓ PDF procesado exitosamente: {len(pdf_reader.pages)} páginas")
@@ -74,27 +65,18 @@ class PDFProcessor:
             
         Returns:
             List[str]: Lista de fragmentos de texto
-            
-        Explicación:
-            - Los chunks permiten búsquedas más precisas en bases vectoriales
-            - El overlap asegura que no se pierda contexto en los límites
         """
         chunks = []
         start = 0
         text_length = len(text)
         
         while start < text_length:
-            # Calcular el final del chunk
             end = start + chunk_size
-            
-            # Extraer el fragmento
             chunk = text[start:end]
             
-            # Agregar a la lista si no está vacío
             if chunk.strip():
                 chunks.append(chunk)
             
-            # Mover el inicio con overlap
             start = end - overlap
             
         logger.info(f"✓ Texto fragmentado en {len(chunks)} chunks")
@@ -103,7 +85,7 @@ class PDFProcessor:
 
 class ResponseFormatter:
     """
-    Clase para formatear respuestas en JSON estructurado.
+    Clase para formatear respuestas en JSON y HTML estructurado.
     """
     
     @staticmethod
@@ -116,7 +98,7 @@ class ResponseFormatter:
         Crea una respuesta JSON exitosa.
         
         Args:
-            operation: Tipo de operación realizada ('store', 'retrieve', 'extract')
+            operation: Tipo de operación realizada
             data: Datos relevantes de la operación
             message: Mensaje descriptivo
             
@@ -128,7 +110,7 @@ class ResponseFormatter:
             "operation": operation,
             "message": message,
             "data": data,
-            "timestamp": None  # Se puede agregar timestamp si se necesita
+            "timestamp": None
         }
         
         return json.dumps(response, ensure_ascii=False, indent=2)
@@ -167,7 +149,9 @@ class ResponseFormatter:
     def format_storage_response(
         num_chunks: int,
         total_characters: int,
-        collection_name: str
+        collection_name: str,
+        document_id: Optional[str] = None,
+        was_updated: bool = False
     ) -> str:
         """
         Formatea la respuesta después de almacenar en Qdrant.
@@ -176,26 +160,48 @@ class ResponseFormatter:
             num_chunks: Número de fragmentos almacenados
             total_characters: Total de caracteres procesados
             collection_name: Nombre de la colección en Qdrant
+            document_id: ID del documento almacenado
+            was_updated: Si fue una actualización de documento existente
             
         Returns:
-            str: HTML con información del almacenamiento
+            str: JSON con información del almacenamiento
         """
         data = {
             "chunks_stored": num_chunks,
             "total_characters": total_characters,
             "collection": collection_name,
-            "storage_location": "qdrant_remote"
+            "document_id": document_id,
+            "was_updated": was_updated,
+            "storage_location": "qdrant_local"
         }
+        
+        action = "actualizado" if was_updated else "almacenado"
+        message = f"PDF {action} exitosamente en {num_chunks} fragmentos"
         
         return ResponseFormatter.format_success_response(
             operation="store_pdf",
             data=data,
-            message=f"PDF almacenado exitosamente en {num_chunks} fragmentos"
+            message=message
         )
     
-    def render_storage_response_html(self, response: dict) -> str:
+    
+    @staticmethod
+    def render_storage_response_html(response: dict) -> str:
+        """
+        Renderiza la respuesta de almacenamiento en HTML.
+        
+        Args:
+            response: Diccionario con la respuesta
+            
+        Returns:
+            str: HTML formateado
+        """
+        was_updated = response.get("data", {}).get("was_updated", False)
+        icon = "🔄" if was_updated else "📄"
+        action = "Actualización" if was_updated else "Almacenamiento"
+        
         return f"""
-            <h3>📄 Reporte de almacenamiento</h3>
+            <h3>{icon} Reporte de {action.lower()}</h3>
 
             <p><b>Estado:</b> {response.get("status")}</p>
             <p><b>Operación:</b> {response.get("operation")}</p>
@@ -207,8 +213,61 @@ class ResponseFormatter:
                 <li><b>Fragmentos almacenados:</b> {response["data"]["chunks_stored"]}</li>
                 <li><b>Total de caracteres:</b> {response["data"]["total_characters"]}</li>
                 <li><b>Colección:</b> {response["data"]["collection"]}</li>
+                <li><b>Tipo:</b> {"Actualización de documento existente" if was_updated else "Nuevo documento"}</li>
+                <li>
+                    <b>Document ID:</b>
+                    <code>{response["data"].get("document_id", "N/A")}</code>
+                </li>
             </ul>
         """
+    
+    
+    @staticmethod
+    def render_analysis_response_html(
+        analysis_list: List[Dict[str, Any]],
+        document_id: Optional[str] = None
+    ) -> str:
+        """
+        Renderiza una lista de análisis en HTML.
+        
+        Args:
+            analysis_list: Lista de análisis recuperados
+            document_id: ID del documento (opcional)
+            
+        Returns:
+            str: HTML formateado
+        """
+        if not analysis_list:
+            return """
+            <h3>📭 No se encontraron análisis</h3>
+            <p>No hay análisis almacenados para este documento.</p>
+            """
+        
+        html_parts = [
+            f"<h3>📊 Análisis encontrados ({len(analysis_list)})</h3>"
+        ]
+        
+        if document_id:
+            html_parts.append(f"<p><b>Document ID:</b> {document_id[:16]}...</p>")
+        
+        for i, analysis in enumerate(analysis_list, 1):
+            html_parts.append(f"""
+            <div style="border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 8px; background: #fafafa;">
+                <h4>🔍 Análisis #{i}</h4>
+                <p><b>ID:</b> {analysis['analysis_id'][:16]}...</p>
+                <p><b>Documento:</b> {analysis['document_id'][:16]}...</p>
+                <p><b>Tipo:</b> {analysis['analysis_type']}</p>
+                <p><b>Fecha:</b> {analysis['created_at']}</p>
+                
+                <h5>📝 Contenido:</h5>
+                <div style="background: white; padding: 12px; border-radius: 4px; border-left: 3px solid #4CAF50;">
+                    {analysis['analysis_content']}
+                </div>
+            </div>
+            """)
+        
+        return "\n".join(html_parts)
+
 
 # FUNCIONES DE UTILIDAD
 def validate_pdf_content(content: bytes) -> bool:
@@ -219,10 +278,9 @@ def validate_pdf_content(content: bytes) -> bool:
         content: Bytes del archivo a validar
         
     Returns:
-        bool: True si es un PDF válido, False en caso contrario
+        bool: True si es un PDF válido
     """
     try:
-        # Los PDFs comienzan con "%PDF"
         pdf_signature = b'%PDF'
         return content.startswith(pdf_signature)
     except Exception:
@@ -248,12 +306,10 @@ def get_pdf_metadata(pdf_content: bytes) -> Dict[str, Any]:
             "has_text": False
         }
         
-        # Verificar si tiene texto extraíble
         if len(pdf_reader.pages) > 0:
             first_page_text = pdf_reader.pages[0].extract_text()
             metadata["has_text"] = bool(first_page_text.strip())
         
-        # Intentar obtener metadatos del documento
         if pdf_reader.metadata:
             metadata.update({
                 "title": pdf_reader.metadata.get('/Title', 'N/A'),
@@ -266,3 +322,19 @@ def get_pdf_metadata(pdf_content: bytes) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error al extraer metadatos: {str(e)}")
         return {"num_pages": 0, "has_text": False, "error": str(e)}
+
+
+def extract_document_id_from_text(text: str) -> Optional[str]:
+    """
+    Extrae un UUID (document_id) del texto usando expresiones regulares.
+    
+    Args:
+        text: Texto donde buscar el UUID
+        
+    Returns:
+        str: UUID encontrado o None
+    """
+    import re
+    uuid_pattern = r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+    match = re.search(uuid_pattern, text, re.IGNORECASE)
+    return match.group(0) if match else None
