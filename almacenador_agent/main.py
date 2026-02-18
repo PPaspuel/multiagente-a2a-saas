@@ -97,7 +97,7 @@ def create_agent_card(public_url=None):
                 'application/pdf'       # Archivos PDF
             ],
             default_output_modes=[
-                'application/json'      # Respuestas JSON
+                'application/json',     # Respuestas JSON
                 'text/html'             # Respuestas HTML para visualización
             ],
             capabilities=capabilities,

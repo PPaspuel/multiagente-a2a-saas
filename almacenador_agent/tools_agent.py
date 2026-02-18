@@ -210,6 +210,7 @@ class ResponseFormatter:
 
             <h3>📊 Detalles del proceso</h3>
             <ul>
+                <li><b>Nombre del documento:</b> {response["data"].get("filename", "N/A")}</li>
                 <li><b>Fragmentos almacenados:</b> {response["data"]["chunks_stored"]}</li>
                 <li><b>Total de caracteres:</b> {response["data"]["total_characters"]}</li>
                 <li><b>Colección:</b> {response["data"]["collection"]}</li>
@@ -252,15 +253,15 @@ class ResponseFormatter:
         
         for i, analysis in enumerate(analysis_list, 1):
             html_parts.append(f"""
-            <div style="border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 8px; background: #fafafa;">
-                <h4>🔍 Análisis #{i}</h4>
+            <div>
+                <h3>🔍 Análisis #{i}</h3>
                 <p><b>ID:</b> {analysis['analysis_id'][:16]}...</p>
                 <p><b>Documento:</b> {analysis['document_id'][:16]}...</p>
                 <p><b>Tipo:</b> {analysis['analysis_type']}</p>
                 <p><b>Fecha:</b> {analysis['created_at']}</p>
                 
-                <h5>📝 Contenido:</h5>
-                <div style="background: white; padding: 12px; border-radius: 4px; border-left: 3px solid #4CAF50;">
+                <h3>📝 Contenido:</h3>
+                <div>
                     {analysis['analysis_content']}
                 </div>
             </div>

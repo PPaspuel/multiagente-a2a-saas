@@ -290,7 +290,7 @@ def analyze_contract(pdf_content: str) -> str:
     except Exception as e:
         logger.error(f"❌ Error durante el análisis: {str(e)}", exc_info=True)
         
-        # Devolver JSON de error
+
         # Devolver HTML de error
         error_html = f"""
         <h3>❌ Error en el Análisis</h3>

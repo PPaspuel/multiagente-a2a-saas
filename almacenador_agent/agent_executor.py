@@ -1,15 +1,17 @@
 """
 Ejecutor del agente almacenador para el protocolo A2A.
-VERSIÓN CORREGIDA:
+VERSIÓN MEJORADA:
 - Deduplicación automática de documentos
 - Almacenamiento de análisis vinculados
 - Recuperación de análisis almacenados
 - FIX: Removido uso de updater.fail() que no existe
+- NUEVO: Extracción de nombre personalizado del usuario
 """
 
 import logging
 import base64
 import json
+import re
 from typing import Optional, List
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -49,6 +51,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
     - Almacenamiento directo a Qdrant 
     - Almacenamiento de análisis vinculados a documentos
     - Recuperación de análisis almacenados
+    - Extracción de nombre personalizado del usuario
     
     Flujo de operaciones:
     1. ALMACENAR PDF: Recibe PDF, detecta duplicados, almacena/actualiza
@@ -197,28 +200,85 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         
         # Palabras clave para almacenar análisis
         store_analysis_keywords = [
-            "almacena el análisis", "guarda el análisis",
-            "guarda el análisis", "store analysis", "save analysis"
+            "almacena el análisis",
+            "guarda el análisis",
+            "almacenar análisis",
+            "guardar análisis",
+            "almacena análisis",
+            "guarda análisis"
         ]
         
         # Palabras clave para recuperar análisis
         retrieve_analysis_keywords = [
-            "recupera el análisis", "muestra el análisis", "ver el análisis",
-            "busca el análisis", "retrieve analysis", "show analysis",
-            "get analysis", "find analysis"
+            "recupera el análisis",
+            "muestra el análisis",
+            "ver el análisis",
+            "obtener análisis",
+            "mostrar análisis",
+            "ver análisis"
         ]
         
-        # Determinar operación
+        # Decisión de operación
         if has_pdf:
             return "store_pdf"
         
-        if any(keyword in user_text_lower for keyword in store_analysis_keywords):
+        elif any(keyword in user_text_lower for keyword in store_analysis_keywords):
             return "store_analysis"
         
-        if any(keyword in user_text_lower for keyword in retrieve_analysis_keywords):
+        elif any(keyword in user_text_lower for keyword in retrieve_analysis_keywords):
             return "retrieve_analysis"
         
-        return "unknown"
+        else:
+            return "unknown"
+    
+    
+    def _extract_custom_filename(self, user_text: str) -> Optional[str]:
+        """
+        Extrae el nombre personalizado que el usuario quiere darle al archivo.
+        
+        Busca patrones como:
+        - "almacena con el nombre X"
+        - "guarda con el nombre X"
+        - "almacena como X"
+        - "guarda como X"
+        - "nombre: X"
+        - "llamado X"
+        - "denominado X"
+        
+        Args:
+            user_text: Texto del mensaje del usuario
+            
+        Returns:
+            str: Nombre personalizado extraído (sin extensión) o None
+        """
+        if not user_text:
+            return None
+        
+        # Patrones para extraer el nombre
+        patterns = [
+            r'(?:con el nombre|con nombre)\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+            r'(?:almacena|guarda|guardar|almacenar)\s+como\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+            r'(?:llamado|denominado|titulado)\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+            r'nombre:\s*["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+            r'nombre\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, user_text, re.IGNORECASE)
+            if match:
+                custom_name = match.group(1).strip()
+                # Limpiar el nombre (eliminar caracteres no válidos)
+                custom_name = re.sub(r'[<>:"/\\|?*]', '', custom_name)
+                
+                if custom_name:
+                    logger.info(f"📝 Nombre personalizado detectado: '{custom_name}'")
+                    # Asegurarnos de que tenga extensión .pdf
+                    if not custom_name.lower().endswith('.pdf'):
+                        custom_name = f"{custom_name}.pdf"
+                    return custom_name
+        
+        logger.info("📝 No se detectó nombre personalizado, se usará el nombre original del archivo")
+        return None
     
     
     async def _handle_store_pdf(
@@ -230,22 +290,24 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         context: RequestContext
     ):
         """
-        Maneja el almacenamiento de archivos PDF con deduplicación.
+        Maneja el almacenamiento de archivos PDF.
+        MEJORADO: Detecta duplicados automáticamente y extrae nombre personalizado.
         """
-        # Procesar archivos PDF
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
-                Part(root=TextPart(text="📄 Procesando archivos PDF..."))
+                Part(root=TextPart(text="📄 Procesando PDF..."))
             ])
         )
         
-        pdf_result = await self._process_pdf_files(user_parts)
+        # Extraer nombre personalizado del usuario
+        custom_filename = self._extract_custom_filename(user_text)
+        
+        # Procesar archivos PDF
+        pdf_result = await self._process_pdf_files(user_parts, custom_filename)
         
         if not pdf_result:
-            error_msg = "❌ No se recibió ningún archivo PDF para procesar."
-            
-            # FIX: Usar update_status en lugar de fail
+            error_msg = "❌ No se pudo procesar el archivo PDF"
             await updater.update_status(
                 TaskState.failed,
                 message=updater.new_agent_message([
@@ -253,103 +315,64 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                 ])
             )
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
-            raise ValueError(error_msg)
+            return
         
-        pdf_text = pdf_result['text']
-        filename = pdf_result['filename']
+        # Fragmentar el texto
+        chunks = self.pdf_processor.chunk_text(pdf_result['text'])
         
-        logger.info(f"✅ PDF procesado: {len(pdf_text)} caracteres")
-        
-        # Fragmentar texto
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
-                Part(root=TextPart(text="✂️ Fragmentando texto en chunks..."))
+                Part(root=TextPart(text=f"💾 Almacenando en Qdrant como '{pdf_result['filename']}'..."))
             ])
         )
         
-        chunks = self.pdf_processor.chunk_text(
-            text=pdf_text,
-            chunk_size=1000,
-            overlap=200
-        )
-        
-        logger.info(f"✂️ Texto fragmentado en {len(chunks)} chunks")
-        
-        # Almacenar en Qdrant (con deduplicación automática)
-        await updater.update_status(
-            TaskState.working,
-            message=updater.new_agent_message([
-                Part(root=TextPart(text=f"💾 Almacenando {len(chunks)} fragmentos en Qdrant..."))
-            ])
-        )
-        
+        # Almacenar en Qdrant (con el nombre correcto)
         storage_result = storage_manager.store_chunks(
             chunks=chunks,
-            full_content=pdf_text,  # Para calcular hash y detectar duplicados
-            filename=filename,
             metadata={
+                "source": "a2a_protocol",
                 "task_id": context.task_id,
-                "origen": "a2a_upload",
-                "user_query": user_text[:200] if user_text else "Sin consulta"
-            }
+                "num_pages": pdf_result['metadata'].get('num_pages', 0)
+            },
+            full_content=pdf_result['text'],
+            filename=pdf_result['filename']  # Usar el nombre (ya sea personalizado o original)
         )
         
-        # Preparar y enviar respuesta
+        # Preparar respuesta
         if storage_result["status"] == "success":
-            logger.info(f"✅ {storage_result['chunks_stored']} fragmentos almacenados exitosamente")
+            response_data = {
+                "status": "success",
+                "operation": "store_pdf",
+                "message": storage_result.get("message", "PDF almacenado exitosamente"),
+                "data": {
+                    "filename": pdf_result['filename'],
+                    "chunks_stored": storage_result["chunks_stored"],
+                    "total_characters": len(pdf_result['text']),
+                    "collection": storage_result["collection"],
+                    "document_id": storage_result.get("document_id"),
+                    "was_updated": storage_result.get("was_updated", False),
+                    "num_pages": pdf_result['metadata'].get('num_pages', 0)
+                }
+            }
             
-            # Verificar si fue actualización o nuevo almacenamiento
-            was_updated = storage_result.get('was_updated', False)
+            # Renderizar HTML
+            html_response = self.response_formatter.render_storage_response_html(response_data)
+            json_response = json.dumps(response_data, indent=2, ensure_ascii=False)
             
-            if was_updated:
-                status_msg = "🔄 Documento actualizado (se detectó duplicado)"
-                existing_info = storage_result.get('existing_doc_info', {})
-                additional_info = f"\n\nDocumento original:\n- Archivo: {existing_info.get('filename')}\n- Almacenado: {existing_info.get('stored_at')}"
-            else:
-                status_msg = "✅ Nuevo documento almacenado"
-                additional_info = ""
-            
-            json_response = self.response_formatter.format_storage_response(
-                num_chunks=storage_result["chunks_stored"],
-                total_characters=len(pdf_text),
-                collection_name=storage_result["collection"],
-                document_id=storage_result["document_id"],
-                was_updated=was_updated
-            )
-            
-            response_dict = json.loads(json_response)
-            html_response = self.response_formatter.render_storage_response_html(
-                response_dict
-            ) + additional_info
-            
-            await updater.update_status(
-                TaskState.working,
-                message=updater.new_agent_message([
-                    Part(root=TextPart(text=status_msg))
-                ])
-            )
+            await event_queue.enqueue_event(new_agent_text_message(html_response))
+            await updater.add_artifact([Part(root=TextPart(text=json_response))])
+            await updater.complete()
             
         else:
-            logger.error(f"❌ Error en almacenamiento: {storage_result.get('message')}")
-            json_response = self.response_formatter.format_error_response(
-                operation="store_pdf",
-                error_message=storage_result.get("message", "Error desconocido en almacenamiento"),
-                error_type="StorageError"
-            )
-            html_response = f"❌ Error: {storage_result.get('message')}"
-            
+            error_msg = f"❌ Error almacenando PDF: {storage_result.get('message')}"
             await updater.update_status(
-                TaskState.working,
+                TaskState.failed,
                 message=updater.new_agent_message([
-                    Part(root=TextPart(text="⚠️ Error durante el almacenamiento"))
+                    Part(root=TextPart(text=error_msg))
                 ])
             )
-        
-        # Enviar respuesta
-        await event_queue.enqueue_event(new_agent_text_message(html_response))
-        await updater.add_artifact([Part(root=TextPart(text=json_response))])
-        await updater.complete()
+            await event_queue.enqueue_event(new_agent_text_message(error_msg))
     
     
     async def _handle_store_analysis(
@@ -363,76 +386,52 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         Maneja el almacenamiento de análisis vinculado a un documento.
         
         Formato esperado:
-        "Almacena el análisis para documento <document_id>: <contenido del análisis>"
-        o
-        "Guardar análisis: <contenido> [document_id: <id>]"
+        "Almacena el análisis: <document_id> <contenido del análisis>"
         """
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
-                Part(root=TextPart(text="💾 Procesando solicitud de almacenamiento de análisis..."))
+                Part(root=TextPart(text="💾 Almacenando análisis..."))
             ])
         )
         
         # Extraer document_id y contenido del análisis
-        document_id = None
-        analysis_content = None
+        doc_id_pattern = r'([a-f0-9\-]{36})'
+        match = re.search(doc_id_pattern, user_text)
         
-        # Buscar patrones comunes
-        import re
-        
-        # Patrón 1: "document_id: <uuid>"
-        doc_id_pattern = r'document_id:\s*([a-f0-9\-]{36})'
-        match = re.search(doc_id_pattern, user_text, re.IGNORECASE)
-        if match:
-            document_id = match.group(1)
-            # Remover la parte del document_id del texto
-            analysis_content = re.sub(doc_id_pattern, '', user_text, flags=re.IGNORECASE).strip()
-        
-        # Patrón 2: "para documento <uuid>"
-        if not document_id:
-            doc_pattern = r'para\s+documento\s+([a-f0-9\-]{36})'
-            match = re.search(doc_pattern, user_text, re.IGNORECASE)
-            if match:
-                document_id = match.group(1)
-                analysis_content = re.sub(doc_pattern, '', user_text, flags=re.IGNORECASE).strip()
-        
-        # Remover palabras clave iniciales
-        if analysis_content:
-            keywords_to_remove = [
-                "almacena el análisis", "guarda el análisis","almacena este análisis",
-                "guarda este análisis", "store analysis", "save analysis"
-            ]
-            for keyword in keywords_to_remove:
-                analysis_content = analysis_content.replace(keyword, "", 1)
-            analysis_content = analysis_content.strip(": ").strip()
-        
-        if not document_id:
+        if not match:
             error_msg = (
-                "❌ No se pudo identificar el document_id.\n\n"
-                "Por favor, especifica el ID del documento de una de estas formas:\n"
-                "1. 'Almacena el análisis para documento <document_id>: <contenido>'\n"
-                "2. 'Guarda el análisis: <contenido> [document_id: <id>]'"
+                "❌ No se encontró un document_id válido en el mensaje.\n"
+                "Formato esperado: 'Almacena el análisis: <document_id> <contenido>'"
             )
-            
-            # FIX: Usar update_status en lugar de fail
             await updater.update_status(
                 TaskState.failed,
-                message=updater.new_agent_message([Part(root=TextPart(text=error_msg))])
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text=error_msg))
+                ])
             )
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
             return
         
-        if not analysis_content or len(analysis_content) < 10:
-            error_msg = "❌ El contenido del análisis está vacío o es demasiado corto."
-            
-            # FIX: Usar update_status en lugar de fail
+        document_id = match.group(1)
+        
+        # Extraer el contenido del análisis (todo después del UUID)
+        analysis_start = match.end()
+        analysis_content = user_text[analysis_start:].strip()
+        
+        if not analysis_content:
+            error_msg = "❌ El contenido del análisis está vacío"
             await updater.update_status(
                 TaskState.failed,
-                message=updater.new_agent_message([Part(root=TextPart(text=error_msg))])
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text=error_msg))
+                ])
             )
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
             return
+        
+        logger.info(f"📝 Almacenando análisis para documento: {document_id}")
+        logger.info(f"📝 Longitud del análisis: {len(analysis_content)} caracteres")
         
         # Almacenar el análisis
         storage_result = storage_manager.store_analysis(
@@ -450,13 +449,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             html_response = f"""
             <h3>✅ Análisis almacenado exitosamente</h3>
             
-            <p><b>Documento base ID:</b> {document_id}</p>
+            <p><b>Documento ID:</b> {document_id}</p>
             <p><b>Análisis ID:</b> {storage_result['analysis_id']}</p>
             <p><b>Tipo:</b> {storage_result['analysis_type']}</p>
             <p><b>Longitud:</b> {len(analysis_content)} caracteres</p>
-            
-            <h4>Vista previa del análisis:</h4>
-            <p>{analysis_content[:200]}...</p>
             """
             
             json_response = json.dumps(storage_result, indent=2)
@@ -492,7 +488,6 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         )
         
         # Buscar document_id en el texto
-        import re
         doc_id_pattern = r'([a-f0-9\-]{36})'
         match = re.search(doc_id_pattern, user_text)
         document_id = match.group(1) if match else None
@@ -517,12 +512,12 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             
             for i, analysis in enumerate(analysis_list, 1):
                 html_parts.append(f"""
-                    <h4>Análisis #{i}</h4>
-                    <p><b>Document base ID:</b> {analysis['document_id']}</p>
+                    <h3>Análisis #{i}</h3>
+                    <p><b>Documento ID:</b> {analysis['document_id']}</p>
                     <p><b>Tipo:</b> {analysis['analysis_type']}</p>
                     <p><b>Fecha:</b> {analysis['created_at']}</p>
                     
-                    <h4>Contenido:</h4>
+                    <h3>Contenido:</h3>
                         {analysis['analysis_content']}
                 """)
             
@@ -541,9 +536,18 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         await updater.complete()
     
     
-    async def _process_pdf_files(self, user_parts: List[Part]) -> Optional[dict]:
+    async def _process_pdf_files(
+        self, 
+        user_parts: List[Part],
+        custom_filename: Optional[str] = None
+    ) -> Optional[dict]:
         """
         Procesa archivos PDF de la solicitud.
+        MEJORADO: Acepta un nombre personalizado del usuario.
+        
+        Args:
+            user_parts: Partes del mensaje del usuario
+            custom_filename: Nombre personalizado proporcionado por el usuario
         
         Returns:
             dict: {'text': str, 'filename': str, 'metadata': dict} o None
@@ -565,8 +569,19 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                             continue
                         
                         elif isinstance(file_obj, FileWithBytes):
-                            file_name = getattr(file_obj, 'filename', 'archivo.pdf')
+                            # Obtener nombre original del archivo
+                            original_filename = getattr(file_obj, 'filename', 'archivo.pdf')
                             file_bytes = getattr(file_obj, 'bytes', None)
+                            
+                            # DECISIÓN: ¿Usar nombre personalizado o nombre original?
+                            if custom_filename:
+                                # El usuario especificó un nombre personalizado
+                                file_name = custom_filename
+                                logger.info(f"📝 Usando nombre personalizado: '{file_name}'")
+                            else:
+                                # Usar nombre original del archivo
+                                file_name = original_filename
+                                logger.info(f"📝 Usando nombre original: '{file_name}'")
                             
                             if file_bytes:
                                 if isinstance(file_bytes, str):

@@ -1,5 +1,5 @@
 """
-Almacenamiento directo a Qdrant sin MCP.
+Almacenamiento directo a Qdrant.
 VERSIÓN MEJORADA:
 - Deduplicación de documentos por hash
 - Almacenamiento de análisis vinculados a documentos

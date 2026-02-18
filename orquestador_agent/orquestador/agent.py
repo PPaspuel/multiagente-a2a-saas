@@ -24,7 +24,7 @@ analisador_agent = RemoteA2aAgent(
     name="analisador_agent",
     description="Agente que analiza contratos y extrae derechos, obligaciones y prohibiciones",
     agent_card=f"http://localhost:8002{AGENT_CARD_WELL_KNOWN_PATH}",
-    timeout=120,
+    timeout=180, # 3 minitos espera la respuesta del agente analizador. 
 )
 
 # Agente orquestador LLM

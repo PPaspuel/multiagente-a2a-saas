@@ -62,6 +62,7 @@ root_agent = Agent(
       <p><strong>Estado:</strong> success o error</p>
       <p><strong>Mensaje:</strong> Descripción del resultado</p>
       <ul>
+        <li><strong>Nombre del documento:</strong> nombre del archivo PDF</li>
         <li><strong>Fragmentos almacenados:</strong> número</li>
         <li><strong>Total de caracteres:</strong> número</li>
         <li><strong>Colección:</strong> nombre de colección</li>
