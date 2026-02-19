@@ -16,3 +16,4 @@ langchain-google-genai
 pytest
 httpx
 qdrant-client
+sentence-transformers

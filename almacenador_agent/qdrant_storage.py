@@ -65,7 +65,7 @@ class QdrantStorageManager:
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=768,
+                        size=384,  # Dimensión real de all-MiniLM-L6-v2
                         distance=models.Distance.COSINE
                     ),
                 )
@@ -80,13 +80,30 @@ class QdrantStorageManager:
                 self.client.create_collection(
                     collection_name=self.analysis_collection,
                     vectors_config=models.VectorParams(
-                        size=768,
+                        size=384,  # Dimensión real de all-MiniLM-L6-v2
                         distance=models.Distance.COSINE
                     ),
                 )
                 logger.info(f"✅ Colección de análisis creada exitosamente")
             
             self.available = True
+            
+            # Inicializar modelo de embeddings para vectorización real
+            # Se carga una sola vez y se reutiliza en todas las operaciones
+            logger.info("🤖 Cargando modelo de embeddings (all-MiniLM-L6-v2)...")
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+                self._embedding_size = 384  # Dimensión real del modelo all-MiniLM-L6-v2
+                logger.info("✅ Modelo de embeddings cargado correctamente")
+            except ImportError:
+                logger.error(
+                    "❌ sentence-transformers no instalado. "
+                    "Instala con: pip install sentence-transformers"
+                )
+                self._embedding_model = None
+                self._embedding_size = 768  # Fallback
+
             logger.info("✅ QdrantStorageManager inicializado correctamente")
             
         except Exception as e:
@@ -103,6 +120,31 @@ class QdrantStorageManager:
             self.client = None
             self.available = False
     
+    
+    def _get_embedding(self, text: str) -> List[float]:
+        """
+        Genera un embedding real para el texto dado usando el modelo cargado.
+
+        Si el modelo no está disponible (por falta de dependencias), devuelve
+        un vector de ceros como fallback para no bloquear el flujo.
+
+        Args:
+            text: Texto a vectorizar
+
+        Returns:
+            List[float]: Vector de embeddings de dimensión 384
+        """
+        if self._embedding_model is None:
+            logger.warning("⚠️ Modelo de embeddings no disponible. Usando vector de fallback.")
+            return [0.0] * 384
+
+        try:
+            vector = self._embedding_model.encode(text, show_progress_bar=False)
+            return vector.tolist()
+        except Exception as e:
+            logger.error(f"❌ Error generando embedding: {e}")
+            return [0.0] * 384
+
     
     def _calculate_document_hash(self, content: str) -> str:
         """
@@ -229,14 +271,13 @@ class QdrantStorageManager:
                 # Generar ID único para cada punto
                 point_id = str(uuid.uuid4())
                 
-                # Vector dummy para demostración (REEMPLAZAR en producción)
-                # En producción usar: sentence-transformers, OpenAI embeddings, etc.
-                vector_dummy = [0.1] * 768
+                # Generar embedding real del chunk para búsqueda semántica
+                chunk_vector = self._get_embedding(chunk)
                 
                 # Crear punto con payload completo
                 point = models.PointStruct(
                     id=point_id,
-                    vector=vector_dummy,
+                    vector=chunk_vector,
                     payload={
                         "contenido": chunk,
                         "chunk_index": idx,
@@ -356,14 +397,14 @@ class QdrantStorageManager:
             analysis_id = str(uuid.uuid4())
             timestamp = datetime.utcnow().isoformat()
             
-            # Vector dummy (en producción, generar embedding real)
-            vector_dummy = [0.1] * 768
+            # Generar embedding real del contenido del análisis
+            analysis_vector = self._get_embedding(analysis_content)
             
             base_metadata = metadata or {}
             
             point = models.PointStruct(
                 id=analysis_id,
-                vector=vector_dummy,
+                vector=analysis_vector,
                 payload={
                     "analysis_content": analysis_content,
                     "document_id": document_id,
@@ -571,8 +612,8 @@ class QdrantStorageManager:
             return []
         
         try:
-            # IMPORTANTE: Generar embedding real del query en producción
-            query_vector = [0.1] * 768
+            # Generar embedding real de la consulta para búsqueda semántica genuina
+            query_vector = self._get_embedding(query)
             
             results = self.client.search(
                 collection_name=self.collection_name,

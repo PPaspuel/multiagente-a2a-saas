@@ -317,8 +317,24 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
             return
         
-        # Fragmentar el texto
-        chunks = self.pdf_processor.chunk_text(pdf_result['text'])
+        # Fragmentar el texto con chunking semántico
+        # Agrupa oraciones por coherencia temática en lugar de cortar por caracteres
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="🧠 Analizando estructura semántica del documento..."))
+            ])
+        )
+        
+        try:
+            chunks = self.pdf_processor.semantic_chunking(
+                pdf_result['text'],
+                similarity_threshold=0.5  # Ajustar según el dominio: más alto = chunks más pequeños
+            )
+        except ImportError:
+            # Fallback a chunking por caracteres si las dependencias no están instaladas
+            logger.warning("⚠️ Usando chunking por caracteres como fallback")
+            chunks = self.pdf_processor.chunk_text(pdf_result['text'])
         
         await updater.update_status(
             TaskState.working,

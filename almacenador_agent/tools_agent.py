@@ -7,6 +7,7 @@ VERSIÓN MEJORADA:
 
 import json
 import logging
+import re
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import PyPDF2
@@ -56,7 +57,8 @@ class PDFProcessor:
     @staticmethod
     def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """
-        Divide el texto en fragmentos (chunks) para almacenar en Qdrant.
+        Divide el texto en fragmentos (chunks) por caracteres.
+        NOTA: Se mantiene como fallback. Se recomienda usar semantic_chunking().
         
         Args:
             text: Texto completo a fragmentar
@@ -79,8 +81,134 @@ class PDFProcessor:
             
             start = end - overlap
             
-        logger.info(f"✓ Texto fragmentado en {len(chunks)} chunks")
+        logger.info(f"✓ Texto fragmentado en {len(chunks)} chunks (método por caracteres)")
         return chunks
+
+    @staticmethod
+    def semantic_chunking(text: str, similarity_threshold: float = 0.5) -> List[str]:
+        """
+        Divide el texto en fragmentos semánticamente coherentes usando
+        sentence-transformers y similitud coseno entre oraciones consecutivas.
+
+        Los chunks se forman agrupando oraciones mientras su similitud semántica
+        supera el umbral. Cuando la similitud cae, se abre un nuevo chunk.
+        También filtra fragmentos que son solo títulos, numeraciones o texto vacío.
+
+        Args:
+            text: Texto completo a fragmentar (idealmente texto extraído de PDF).
+            similarity_threshold: Umbral de similitud coseno entre [0, 1].
+                - Valores altos (ej: 0.7-0.9): chunks más pequeños y temáticamente homogéneos.
+                - Valores bajos (ej: 0.3-0.5): chunks más grandes con más variedad temática.
+                Se recomienda comenzar con 0.5 y ajustar según el dominio del documento.
+
+        Returns:
+            List[str]: Lista de fragmentos semánticamente coherentes y limpios.
+                       Los chunks vacíos, títulos cortos y numeraciones se descartan.
+
+        Raises:
+            ImportError: Si sentence-transformers o nltk no están instalados.
+        """
+        try:
+            from sentence_transformers import SentenceTransformer, util
+            import nltk
+        except ImportError as e:
+            logger.error(
+                "❌ Dependencias faltantes para chunking semántico. "
+                "Instala con: pip install sentence-transformers nltk"
+            )
+            raise ImportError(
+                "sentence-transformers y nltk son requeridos para semantic_chunking. "
+                f"Error original: {e}"
+            )
+
+        # Descargar tokenizador de oraciones si no está disponible
+        try:
+            nltk.data.find('tokenizers/punkt_tab')
+        except LookupError:
+            logger.info("📥 Descargando recursos NLTK (punkt_tab)...")
+            nltk.download('punkt_tab', quiet=True)
+
+        # Cargar modelo ligero y eficiente para generar embeddings
+        logger.info("🤖 Cargando modelo de embeddings semánticos (all-MiniLM-L6-v2)...")
+        model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+
+        # Tokenizar el texto en oraciones individuales
+        sentences = nltk.sent_tokenize(text)
+
+        if not sentences:
+            logger.warning("⚠️ No se encontraron oraciones en el texto")
+            return []
+
+        if len(sentences) == 1:
+            return [sentences[0].strip()] if sentences[0].strip() else []
+
+        # Generar embeddings para todas las oraciones en un solo paso (eficiente)
+        logger.info(f"🔢 Generando embeddings para {len(sentences)} oraciones...")
+        embeddings = model.encode(sentences, show_progress_bar=False)
+
+        # Calcular similitud coseno entre oraciones consecutivas
+        similarities = [
+            util.cos_sim(embeddings[i], embeddings[i + 1]).item()
+            for i in range(len(embeddings) - 1)
+        ]
+
+        # Agrupar oraciones en chunks según el umbral de similitud
+        # Cuando la similitud cae por debajo del umbral → ruptura semántica → nuevo chunk
+        raw_chunks = []
+        current_chunk = [sentences[0]]
+
+        for i, score in enumerate(similarities):
+            if score < similarity_threshold:
+                raw_chunks.append(" ".join(current_chunk))
+                current_chunk = []
+            current_chunk.append(sentences[i + 1])
+
+        if current_chunk:
+            raw_chunks.append(" ".join(current_chunk))
+
+        # ── Limpieza y filtrado de chunks ─────────────────────────────────────────
+        # Elimina prefijos de numeración al inicio: "1.", "I.", "2.1.", "III." etc.
+        prefix_pattern = re.compile(
+            r"^\s*(?:(?:[IVXLCDMivxlcdm]+|\d+)\.(?:\d+\.)*\s*)"
+        )
+
+        def is_title_or_noise(t: str, min_length: int = 15) -> bool:
+            """
+            Retorna True si el fragmento es probablemente ruido o un título sin
+            contenido informativo suficiente para almacenar en la base vectorial.
+            """
+            t = t.strip()
+            if not t:
+                return True
+            if len(t) < min_length:
+                return True
+            alpha_chars = sum(c.isalpha() for c in t)
+            if alpha_chars == 0:
+                return True  # Solo símbolos/números
+            upper_chars = sum(c.isupper() for c in t)
+            if upper_chars / len(t) > 0.75:
+                return True  # Probable encabezado en mayúsculas
+            if re.fullmatch(
+                r"^\s*(?:SECTION|ARTICLE|CLAUSE|CAPÍTULO|SECCIÓN|ARTÍCULO)\s+"
+                r"(?:[IVXLCDM]+|\d+)\s*$",
+                t, re.IGNORECASE
+            ):
+                return True
+            return False
+
+        filtered_chunks = []
+        for chunk in raw_chunks:
+            cleaned = prefix_pattern.sub("", chunk, count=1).strip()
+            if is_title_or_noise(cleaned):
+                logger.debug(f"🗑️ Chunk descartado (ruido/título): '{cleaned[:60]}'")
+                continue
+            filtered_chunks.append(cleaned)
+
+        logger.info(
+            f"✓ Chunking semántico: {len(raw_chunks)} chunks crudos → "
+            f"{len(filtered_chunks)} chunks válidos almacenables"
+        )
+        return filtered_chunks
 
 
 class ResponseFormatter:
