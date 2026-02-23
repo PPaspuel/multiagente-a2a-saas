@@ -393,13 +393,41 @@ class QdrantRetriever:
             key=lambda p: p.payload.get("chunk_index", 0) if p.payload else 0
         )
 
-        # Reconstruir el texto concatenando los chunks en orden
+        # Filtro de chunks relevantes
         content_parts = []
+        discarded = 0
+
         for point in sorted_points:
             payload = point.payload or {}
             chunk_text = payload.get("contenido", "").strip()
-            if chunk_text:
-                content_parts.append(chunk_text)
+
+            # Criterio 1: descartar vacíos
+            if not chunk_text:
+                discarded += 1
+                continue
+
+            # Criterio 2: descartar chunks con 2 palabras o menos
+            words = chunk_text.split()
+            if len(words) <= 2:
+                discarded += 1
+                continue
+
+            # Criterio 3: descartar si no contiene ninguna letra
+            if not any(c.isalpha() for c in chunk_text):
+                discarded += 1
+                continue
+
+            # Criterio 4: descartar si más del 70% son mayúsculas (título)
+            alpha_chars = [c for c in chunk_text if c.isalpha()]
+            if alpha_chars and sum(c.isupper() for c in alpha_chars) / len(alpha_chars) > 0.70:
+                discarded += 1
+                continue
+
+            content_parts.append(chunk_text)
+        logger.info(
+            f"📊 Chunks: {len(sorted_points)} total → "
+            f"{len(content_parts)} relevantes, {discarded} descartados"
+        )
 
         full_content = "\n\n".join(content_parts)
 
@@ -411,7 +439,8 @@ class QdrantRetriever:
             "document_id": document_id,
             "filename": first_payload.get("filename", "desconocido"),
             "stored_at": first_payload.get("stored_at", "N/A"),
-            "num_chunks": len(sorted_points),
+            "num_chunks": len(content_parts),
+            "total_chunks_raw": len(sorted_points),
             "total_characters": len(full_content),
             "content": full_content,
             "message": (

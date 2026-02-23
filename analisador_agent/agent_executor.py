@@ -106,12 +106,12 @@ class ContractAnalyzerExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
 
         try:
-            # ── PASO 0: Inicializar tarea ──────────────────────────────────────
+            # PASO 0: Inicializar tarea
             if not context.current_task:
                 await updater.submit()
             await updater.start_work()
 
-            # ── PASO 1: Extraer input del usuario ─────────────────────────────
+            # PASO 1: Extraer input del usuario
             user_text = ""
             user_parts = []
 
@@ -131,7 +131,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
             logger.info(f"📝 Texto del usuario: {user_text[:100] if user_text else 'Sin texto'}")
             logger.info(f"📦 Número de partes: {len(user_parts)}")
 
-            # ── PASO 2: Detectar flujo y obtener texto del contrato ───────────
+            # PASO 2: Detectar flujo y obtener texto del contrato
             has_pdf = self._has_pdf_attachment(user_parts)
 
             if has_pdf:
@@ -247,7 +247,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
                     ])
                 )
 
-            # ── PASO 3: Ejecutar análisis con CrewAI (igual en ambos flujos) ──
+            # PASO 3: Ejecutar análisis con CrewAI (igual en ambos flujos)
             await updater.update_status(
                 TaskState.working,
                 message=updater.new_agent_message([
@@ -261,7 +261,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
             logger.info(f"✅ Análisis completado")
             logger.info(f"📊 Resultado: {analysis_result[:200]}...")
 
-            # ── PASO 4: Enviar respuesta ───────────────────────────────────────
+            # PASO 4: Enviar respuesta
             await updater.update_status(
                 TaskState.working,
                 message=updater.new_agent_message([
@@ -297,7 +297,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
 
             raise ServerError(error=InternalError()) from e
 
-    # ── Métodos de detección ───────────────────────────────────────────────────
+    # Métodos de detección 
 
     def _has_pdf_attachment(self, user_parts: List[Part]) -> bool:
         """Retorna True si el mensaje contiene al menos un archivo PDF adjunto."""
@@ -363,7 +363,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
 
         return None
 
-    # ── Métodos de renderizado HTML ────────────────────────────────────────────
+    # Métodos de renderizado HTML 
 
     def _render_available_documents(self, documents: List[Dict]) -> str:
         items = "".join([
@@ -407,7 +407,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
             "<p>Usa el <b>document_id</b> completo para identificar el documento exacto.</p>"
         )
 
-    # ── Método original de extracción de PDF (sin cambios) ────────────────────
+    # Método original de extracción de PDF (sin cambios)
 
     async def _extract_pdf_text(self, user_parts: List[Part]) -> Optional[str]:
         """

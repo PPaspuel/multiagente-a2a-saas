@@ -3,5 +3,6 @@ venv/
 .env
 *.db
 .adk/
+**/.adk/
 __pycache__/
 *.pyc
