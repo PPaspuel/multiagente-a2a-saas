@@ -106,16 +106,26 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                 if hasattr(message, 'parts') and message.parts:
                     user_parts = message.parts
                     
-                    # Extraer texto de las partes
-                    text_content = []
+                    # Recopilar todas las parts de texto
+                    text_parts = []
                     for part in user_parts:
                         if isinstance(part, Part):
                             root = getattr(part, 'root', None)
                             if isinstance(root, TextPart):
-                                text_content.append(root.text)
+                                text_parts.append(root.text)
                     
-                    user_text = " ".join(text_content) if text_content else ""
+                    # La instrucción real es la ÚLTIMA part de texto.
+                    # Las anteriores son historial inyectado por el protocolo A2A.
+                    # Filtramos parts de contexto para quedarnos solo con la instrucción actual.
+                    actual_instruction_parts = [
+                        t for t in text_parts
+                        if not t.startswith("For context:")
+                        and not (t.startswith("[") and ("] called tool" in t or "] said:" in t or "] `" in t))
+                    ]
                     
+                    # Tomar la última instrucción real
+                    user_text = actual_instruction_parts[-1] if actual_instruction_parts else ""
+                        
             logger.info(f"📝 Texto extraído: {user_text[:100] if user_text else 'Sin texto'}")
             logger.info(f"📦 Número de partes: {len(user_parts)}")
             
@@ -134,7 +144,13 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             
             elif operation_type == "retrieve_analysis":
                 await self._handle_retrieve_analysis(updater, event_queue, user_text)
+
+            elif operation_type == "get_stats":
+                await self._handle_get_stats(updater, event_queue, user_text)
             
+            elif operation_type == "get_analyzed_docs":  
+                await self._handle_get_analyzed_docs(updater, event_queue)
+
             else:
                 # Operación no reconocida
                 error_msg = (
@@ -142,7 +158,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                     "Operaciones disponibles:\n"
                     "1. 📄 Almacenar PDF: Envía un archivo PDF\n"
                     "2. 💾 Almacenar análisis: Envía texto con 'almacena el análisis' + document_id + análisis\n"
-                    "3. 🔍 Recuperar análisis: Envía 'recupera el análisis' o 'muestra el análisis'"
+                    "3. 🔍 Recuperar análisis: Envía 'recupera el análisis' o 'muestra el análisis'\n"
+                    "4. 📊 Obtener documentos analizados: Envía 'qué documentos han sido analizados'\n"
+                    "5. 📊 Obtener estadísticas: Envía 'cuantos documentos' o 'cuantos análisis'\n"
+                    "\nVUELVE A INTENTAR CON UN FORMATO VÁLIDO SI EL PROBLEMA PERSISTE."
                 )
                 
                 # FIX: Usar update_status en lugar de fail
@@ -218,6 +237,41 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             "ver análisis"
         ]
         
+        # Palabras clave para estadísticas
+        stats_keywords = [
+            "cuantos documentos",
+            "cuántos documentos",
+            "cuantos análisis",
+            "cuántos análisis",
+            "cuantos archivos",
+            "cuántos archivos",
+            "estadísticas",
+            "estadisticas",
+            "que hay almacenado",
+            "qué hay almacenado"
+        ]
+
+        # Palabras clave para documentos analizados
+        analyzed_docs_keywords = [
+            "documentos analizados",
+            "documento analizado",
+            "tienen análisis",
+            "tienen analisis",
+            "tiene análisis",
+            "tiene analisis",
+            "han sido analizados",
+            "ya fue analizado",
+            "cuáles tienen análisis",
+            "cuales tienen analisis",
+            "que documentos han",  
+            "qué documentos han",
+            "documentos tienen analisis",
+            "documentos tienen análisis",
+            "con análisis",
+            "con analisis"
+        ]
+
+
         # Decisión de operación
         if has_pdf:
             return "store_pdf"
@@ -227,6 +281,12 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         
         elif any(keyword in user_text_lower for keyword in retrieve_analysis_keywords):
             return "retrieve_analysis"
+        
+        elif any(keyword in user_text_lower for keyword in stats_keywords):
+            return "get_stats"
+        
+        elif any(keyword in user_text_lower for keyword in analyzed_docs_keywords):
+            return "get_analyzed_docs"
         
         else:
             return "unknown"
@@ -256,7 +316,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         
         # Patrones para extraer el nombre
         patterns = [
-            r'(?:con el nombre|con nombre)\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
+            r'(?:con el nombre|con nombre)\s+(?:de\s+)?["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
             r'(?:almacena|guarda|guardar|almacenar)\s+como\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
             r'(?:llamado|denominado|titulado)\s+["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
             r'nombre:\s*["\']?([^"\'.\n]+?)["\']?(?:\.|$|\n)',
@@ -450,10 +510,12 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         logger.info(f"📝 Longitud del análisis: {len(analysis_content)} caracteres")
         
         # Almacenar el análisis
+        filename = storage_manager.get_filename_by_document_id(document_id)
         storage_result = storage_manager.store_analysis(
             document_id=document_id,
             analysis_content=analysis_content,
             analysis_type="general",
+            filename=filename,
             metadata={
                 "task_id": context.task_id,
                 "origen": "a2a_analysis"
@@ -483,10 +545,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
     
     
     async def _handle_retrieve_analysis(
-        self,
-        updater: TaskUpdater,
-        event_queue: EventQueue,
-        user_text: str
+    self,
+    updater: TaskUpdater,
+    event_queue: EventQueue,
+    user_text: str
     ):
         """
         Maneja la recuperación de análisis almacenados.
@@ -502,7 +564,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                 Part(root=TextPart(text="🔍 Buscando análisis almacenados..."))
             ])
         )
-        
+    
         # Buscar document_id en el texto
         doc_id_pattern = r'([a-f0-9\-]{36})'
         match = re.search(doc_id_pattern, user_text)
@@ -518,40 +580,155 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         
         # Preparar respuesta
         if not analysis_list:
-            html_response = """
-            <h3>📭 No se encontraron análisis</h3>
-            <p>No hay análisis almacenados que coincidan con tu búsqueda.</p>
-            """
+            text_response = (
+                "📭 No se encontraron análisis\n"
+                "\nNo hay análisis almacenados que coincidan con tu búsqueda."
+            )
+            json_response = json.dumps({
+                "status": "success",
+                "operation": "retrieve_analysis",
+                "count": 0,
+                "analysis": []
+            }, indent=2, ensure_ascii=False)
         else:
-            # Generar HTML con los análisis
-            html_parts = [f"<h3>📊 Análisis encontrados ({len(analysis_list)})</h3>"]
-            
+            # Generar respuesta en texto plano estructurado
+            text_parts = [f"✅ Se encontraron {len(analysis_list)} análisis\n"]
+
             for i, analysis in enumerate(analysis_list, 1):
-                html_parts.append(f"""
-                    <h3>Análisis #{i}</h3>
-                    <p><b>Documento ID:</b> {analysis['document_id']}</p>
-                    <p><b>Tipo:</b> {analysis['analysis_type']}</p>
-                    <p><b>Fecha:</b> {analysis['created_at']}</p>
-                    
-                    <h3>Contenido:</h3>
-                        {analysis['analysis_content']}
-                """)
-            
-            html_response = "\n".join(html_parts)
-        
-        # Crear JSON response
-        json_response = json.dumps({
-            "status": "success",
-            "operation": "retrieve_analysis",
-            "count": len(analysis_list),
-            "analysis": analysis_list
-        }, indent=2, ensure_ascii=False)
-        
-        await event_queue.enqueue_event(new_agent_text_message(html_response))
+                text_parts.append(
+                    f"\n📊 Análisis #{i}\n"
+                    f"\n{'─'*40}\n"
+                    f"\n📄 Documento:  {analysis.get('filename', 'No disponible')}\n"
+                    f"\n🆔 ID:         {analysis.get('document_id', 'N/A')}\n"
+                    f"\n🏷️  Tipo:       {analysis.get('analysis_type', 'N/A')}\n"
+                    f"\n📅 Fecha:      {analysis.get('created_at', 'N/A')}\n"
+                    f"\n📝 Contenido:\n{analysis.get('analysis_content', '')}\n"
+                    f"\n{'─'*40}"
+                )
+
+            text_response = "\n".join(text_parts)
+            json_response = json.dumps({
+                "status": "success",
+                "operation": "retrieve_analysis",
+                "count": len(analysis_list),
+                "analysis": analysis_list
+            }, indent=2, ensure_ascii=False)
+
+        # ✅ Siempre se ejecuta, sin importar si hay análisis o no
+        await event_queue.enqueue_event(new_agent_text_message(text_response))
         await updater.add_artifact([Part(root=TextPart(text=json_response))])
         await updater.complete()
     
-    
+    async def _handle_get_stats(
+    self,
+    updater: TaskUpdater,
+    event_queue: EventQueue,
+    user_text: str
+    ):
+        await updater.update_status(
+            TaskState.working,
+            message=updater.new_agent_message([
+                Part(root=TextPart(text="📊 Consultando estadísticas..."))
+            ])
+        )
+
+        stats = storage_manager.get_stats()
+
+        if stats["status"] == "error":
+            await event_queue.enqueue_event(new_agent_text_message(
+                f"❌ Error obteniendo estadísticas: {stats['message']}"
+            ))
+            await updater.complete()
+            return
+
+        user_text_lower = user_text.lower()
+        solo_analisis = any(k in user_text_lower for k in ["análisis", "analisis"])
+        solo_documentos = any(k in user_text_lower for k in ["documento", "archivo"])
+
+        if solo_analisis and not solo_documentos:
+            # El usuario preguntó solo por análisis
+            text_response = (
+                f"🔍 Análisis guardados\n"
+                f"\n{'─'*40}\n"
+                f"\n📊 Total de análisis almacenados: {stats['analysis']['total']}\n"
+                f"\n{'─'*40}"
+            )
+
+        elif solo_documentos and not solo_analisis:
+            # El usuario preguntó solo por documentos
+            doc_list = ""
+            for i, doc in enumerate(stats["documents"]["list"], 1):
+                doc_list += (
+                    f"\n{i}. {doc['filename']}\n"
+                    f"   ID: {doc['document_id']}\n"
+                    f"   Almacenado: {doc['stored_at']}\n"
+                )
+            text_response = (
+                f"📄 Documentos almacenados\n"
+                f"\n{'─'*40}\n"
+                f"\n📄 Total de documentos únicos: {stats['documents']['total']}\n"
+                f"\n{'─'*40}\n\n"
+                f"📁 Lista de documentos:\n"
+                f"{doc_list if doc_list else '  (ninguno)'}"
+            )
+
+        else:
+            # El usuario preguntó por todo o no fue específico
+            doc_list = ""
+            for i, doc in enumerate(stats["documents"]["list"], 1):
+                doc_list += (
+                    f"\n{i}. {doc['filename']}\n"
+                    f"   ID: {doc['document_id']}\n"
+                    f"   Almacenado: {doc['stored_at']}\n"
+                )
+            text_response = (
+                f"📊 Estadísticas del almacenamiento\n"
+                f"\n{'─'*40}\n"
+                f"\n📄 Documentos únicos:  {stats['documents']['total']}\n"
+                f"\n🔍 Análisis guardados: {stats['analysis']['total']}\n"
+                f"\n🧩 Chunks totales:     {stats['chunks']['total']}\n"
+                f"\n{'─'*40}\n\n"
+                f"📁 Documentos almacenados:\n"
+                f"{doc_list if doc_list else '  (ninguno)'}"
+            )
+
+        await event_queue.enqueue_event(new_agent_text_message(text_response))
+        await updater.add_artifact([Part(root=TextPart(text=json.dumps(stats, indent=2, ensure_ascii=False)))])
+        await updater.complete()
+
+
+    async def _handle_get_analyzed_docs(self, updater, event_queue):
+        result = storage_manager.get_analyzed_documents()
+
+        if result["status"] == "error":
+            await event_queue.enqueue_event(new_agent_text_message(
+                f"❌ Error: {result['message']}"
+            ))
+            await updater.complete()
+            return
+
+        if result["total"] == 0:
+            text_response = "📭 Ningún documento tiene análisis almacenado aún."
+        else:
+            doc_list = ""
+            for i, doc in enumerate(result["documents"], 1):
+                doc_list += (
+                    f"\n{i}. {doc['filename']}\n"
+                    f"   ID: {doc['document_id']}\n"
+                    f"   Análisis guardados: {doc['total_analyses']}\n"
+                )
+            text_response = (
+                f"📊 Documentos con análisis almacenados\n"
+                f"\n{'─'*40}\n"
+                f"\n✅ Total: {result['total']} documento(s) analizado(s)\n"
+                f"\n{'─'*40}\n"
+                f"{doc_list}"
+            )
+
+        await event_queue.enqueue_event(new_agent_text_message(text_response))
+        await updater.complete()
+
+
     async def _process_pdf_files(
         self, 
         user_parts: List[Part],

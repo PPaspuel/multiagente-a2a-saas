@@ -372,7 +372,8 @@ class QdrantStorageManager:
         document_id: str,
         analysis_content: str,
         analysis_type: str = "general",
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        filename: str = "No disponible"
     ) -> Dict[str, Any]:
         """
         Almacena un análisis vinculado a un documento.
@@ -411,6 +412,7 @@ class QdrantStorageManager:
                     "analysis_type": analysis_type,
                     "created_at": timestamp,
                     "content_length": len(analysis_content),
+                    "filename": filename,
                     **base_metadata
                 }
             )
@@ -500,6 +502,7 @@ class QdrantStorageManager:
                 results.append({
                     "analysis_id": point.id,
                     "document_id": point.payload.get("document_id"),
+                    "filename": point.payload.get("filename", "No disponible"),
                     "analysis_type": point.payload.get("analysis_type"),
                     "analysis_content": point.payload.get("analysis_content"),
                     "created_at": point.payload.get("created_at"),
@@ -682,7 +685,150 @@ class QdrantStorageManager:
                 "available": True,
                 "error": str(e)
             }
+        
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Retorna estadísticas reales de documentos y análisis almacenados.
+        - Documentos únicos (por document_id, no por chunks)
+        - Análisis almacenados
+        """
+        if not self.available:
+            return {"status": "error", "message": "Qdrant no disponible"}
+        
+        try:
+            # Contar documentos únicos usando scroll y agrupando por document_id
+            all_chunks = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=10000,
+                with_payload=["document_id", "filename", "stored_at"]
+            )
+            
+            # Agrupar por document_id para obtener documentos únicos
+            unique_docs = {}
+            for point in all_chunks[0]:
+                doc_id = point.payload.get("document_id")
+                if doc_id and doc_id not in unique_docs:
+                    unique_docs[doc_id] = {
+                        "document_id": doc_id,
+                        "filename": point.payload.get("filename", "unknown"),
+                        "stored_at": point.payload.get("stored_at", "N/A")
+                    }
+            
+            # Contar análisis
+            all_analysis = self.client.scroll(
+                collection_name=self.analysis_collection,
+                limit=10000,
+                with_payload=["document_id", "analysis_type", "created_at"]
+            )
+            
+            return {
+                "status": "success",
+                "documents": {
+                    "total": len(unique_docs),
+                    "list": list(unique_docs.values())
+                },
+                "analysis": {
+                    "total": len(all_analysis[0]),
+                },
+                "chunks": {
+                    "total": len(all_chunks[0])
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo estadísticas: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+        
+    def get_filename_by_document_id(self, document_id: str) -> str:
+        """Obtiene el filename de un documento por su document_id"""
+        try:
+            result = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="document_id", match=MatchValue(value=document_id))
+                ]),
+                limit=1,
+                with_payload=["filename"]
+            )
+            if result[0]:
+                return result[0][0].payload.get("filename", "No disponible")
+            return "No disponible"
+        except Exception:
+            return "No disponible"
 
+    def get_analyzed_documents(self) -> Dict[str, Any]:
+        """
+        Retorna los documentos que tienen al menos un análisis almacenado,
+        cruzando la colección de documentos con la de análisis.
+        """
+        if not self.available:
+            return {"status": "error", "message": "Qdrant no disponible"}
+
+        try:
+            # 1. Obtener todos los análisis y sus document_id únicos
+            all_analysis = self.client.scroll(
+                collection_name=self.analysis_collection,
+                limit=10000,
+                with_payload=["document_id", "analysis_type", "created_at"]
+            )
+
+            # Agrupar análisis por document_id
+            analyzed_doc_ids: Dict[str, list] = {}
+            for point in all_analysis[0]:
+                doc_id = point.payload.get("document_id")
+                if doc_id:
+                    if doc_id not in analyzed_doc_ids:
+                        analyzed_doc_ids[doc_id] = []
+                    analyzed_doc_ids[doc_id].append({
+                        "analysis_id": point.id,
+                        "created_at": point.payload.get("created_at", "N/A")
+                    })
+
+            if not analyzed_doc_ids:
+                return {
+                    "status": "success",
+                    "total": 0,
+                    "documents": []
+                }
+
+            # 2. Para cada document_id con análisis, obtener el filename
+            #    desde la colección de documentos
+            result_docs = []
+            for doc_id, analyses in analyzed_doc_ids.items():
+                doc_info = self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=Filter(must=[
+                        FieldCondition(
+                            key="document_id",
+                            match=MatchValue(value=doc_id)
+                        )
+                    ]),
+                    limit=1,
+                    with_payload=["filename", "stored_at"]
+                )
+
+                filename = "No disponible"
+                stored_at = "N/A"
+                if doc_info[0]:
+                    filename = doc_info[0][0].payload.get("filename", "No disponible")
+                    stored_at = doc_info[0][0].payload.get("stored_at", "N/A")
+
+                result_docs.append({
+                    "document_id": doc_id,
+                    "filename": filename,
+                    "stored_at": stored_at,
+                    "total_analyses": len(analyses)
+                })
+
+            return {
+                "status": "success",
+                "total": len(result_docs),
+                "documents": result_docs
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo documentos analizados: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
 
 # Instancia global del gestor de almacenamiento
 storage_manager = QdrantStorageManager()

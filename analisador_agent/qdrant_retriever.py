@@ -13,10 +13,10 @@ Busca documentos por:
 import logging
 import os
 import re
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,9 +43,9 @@ class QdrantRetriever:
         Usa las mismas variables de entorno que el agente almacenador.
         """
         try:
-            qdrant_host = os.getenv("QDRANT_HOST", "localhost")
-            qdrant_port = int(os.getenv("QDRANT_PORT", 6333))
-            self.collection_name = os.getenv("COLLECTION_NAME", "contratos_saas")
+            qdrant_host = os.getenv("QDRANT_HOST")
+            qdrant_port = int(os.getenv("QDRANT_PORT"))
+            self.collection_name = os.getenv("COLLECTION_NAME")
 
             if not self.collection_name:
                 raise ValueError("La variable de entorno COLLECTION_NAME no está definida.")
@@ -241,8 +241,8 @@ class QdrantRetriever:
                 payload = point.payload or {}
                 stored_filename = (payload.get("filename") or "").lower().replace(".pdf", "")
 
-                # Coincidencia parcial: el nombre buscado está contenido en el nombre guardado
-                if query_clean in stored_filename or stored_filename in query_clean:
+                # Coincidencia exacta entre consulta y nombre almacenado (sin extensión)
+                if query_clean == stored_filename:
                     doc_id = payload.get("document_id")
                     if doc_id:
                         if doc_id not in doc_groups:
