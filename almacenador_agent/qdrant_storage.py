@@ -756,6 +756,28 @@ class QdrantStorageManager:
         except Exception:
             return "No disponible"
 
+    def get_document_id_by_filename(self, filename: str) -> Optional[str]:
+        """Busca el document_id a partir del nombre del archivo."""
+        try:
+            results = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="filename",
+                        match=models.MatchValue(value=filename)
+                    )]
+                ),
+                limit=1,
+                with_payload=True
+            )
+            points = results[0]
+            if points:
+                return points[0].payload.get("document_id")
+            return None
+        except Exception as e:
+            logger.error(f"Error buscando documento por nombre: {e}")
+            return None
+
     def get_analyzed_documents(self) -> Dict[str, Any]:
         """
         Retorna los documentos que tienen al menos un análisis almacenado,

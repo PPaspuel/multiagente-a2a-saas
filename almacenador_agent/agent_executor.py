@@ -570,6 +570,15 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         match = re.search(doc_id_pattern, user_text)
         document_id = match.group(1) if match else None
         
+        # ✅ NUEVO: Si no hay UUID, intentar resolver por nombre de archivo
+        if not document_id:
+            filename_pattern = r'[\w\-]+\.pdf'
+            filename_match = re.search(filename_pattern, user_text, re.IGNORECASE)
+            if filename_match:
+                filename = filename_match.group(0)
+                logger.info(f"🔍 Resolviendo document_id por nombre: {filename}")
+                document_id = storage_manager.get_document_id_by_filename(filename)
+
         # Recuperar análisis
         if document_id:
             logger.info(f"🔍 Buscando análisis para documento: {document_id}")

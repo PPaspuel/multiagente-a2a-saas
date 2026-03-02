@@ -17,3 +17,4 @@ pytest
 httpx
 qdrant-client
 sentence-transformers
+gradio
