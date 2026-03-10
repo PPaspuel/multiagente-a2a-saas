@@ -54,23 +54,6 @@ contract_analyzer_agent = Agent(
     llm=llm
 )
 
-
-# ============================================
-# AGENTE EXTRACTOR DE TEXTO PDF
-# ============================================
-pdf_extractor_agent = Agent(
-    role='Extractor de Contenido PDF',
-    goal='Extraer y preparar el texto completo de documentos PDF para su análisis',
-    backstory="""Eres un especialista en procesamiento de documentos digitales.
-    Tu trabajo es asegurar que el texto de los PDFs se extraiga correctamente,
-    preservando la estructura, numeración de cláusulas, y formato relevante.
-    Detectas y limpias errores de OCR cuando es necesario.""",
-    verbose=True,
-    allow_delegation=False,
-    llm=llm
-)
-
-
 # ============================================
 # AGENTE FORMATEADOR DE RESPUESTAS HTML
 # ============================================
@@ -90,29 +73,6 @@ html_formatter_agent = Agent(
 # ============================================
 # FUNCIONES HELPER PARA CREAR TAREAS
 # ============================================
-
-def create_extraction_task(pdf_content: str) -> Task:
-    """
-    Crea la tarea de extracción de texto del PDF.
-    
-    Args:
-        pdf_content: Contenido del PDF ya extraído
-        
-    Returns:
-        Task: Tarea de preparación del texto
-    """
-    return Task(
-        description=f"""Prepara el siguiente contenido de contrato para análisis:
-        
-        {pdf_content[:2000]}... (contenido completo disponible)
-        
-        Asegúrate de que el texto esté limpio y bien estructurado.
-        Identifica la numeración de secciones y cláusulas si existe.
-        """,
-        expected_output="Texto del contrato limpio y estructurado, listo para análisis legal",
-        agent=pdf_extractor_agent
-    )
-
 
 def create_analysis_task(pdf_content: str) -> Task:
     """
@@ -156,13 +116,38 @@ INSTRUCCIONES CRÍTICAS:
    - Restricciones territoriales
    - Cualquier otra prohibición
 
+REGLAS DE FIDELIDAD LEGAL — APLICAN A CUALQUIER CONTRATO:
+Estas reglas son obligatorias para garantizar que el análisis sea fiel al texto original:
+
+- PRESERVA EXCEPCIONES: Si una cláusula incluye "except", "salvo", "unless", "excepto que",
+    "con excepción de" — inclúyela en la descripción. Nunca omitas la excepción.
+    Ejemplo: "La Parte A es propietaria del contenido, EXCEPTO lo expresamente establecido en el Acuerdo"
+
+- PRESERVA CONDICIONES: Si una acción requiere un aviso, plazo o condición previa —
+    "with reasonable advance notice", "con previo aviso escrito", "previa autorización" —
+    inclúyela. Nunca simplifiques a "puede hacer X" si el contrato dice "puede hacer X con condición Y".
+
+- PRESERVA MATICES DE PODER: Distingue entre "sole discretion / a su sola discreción" (poder unilateral)
+    versus acuerdos bilaterales. No los trates como equivalentes.
+
+- IDENTIFICA LA PARTE EXACTA: Distingue siempre si aplica a la Parte A, la Parte B, o a ambas.
+    Nunca uses "las partes" si la cláusula solo aplica a una.
+
+- NO INFERAS LO QUE NO ESTÁ ESCRITO: Solo extrae lo que está explícita o
+    implícitamente en el texto. No añadas interpretaciones propias.
+
+- RESPONSE LANGUAGE: Regardless of the contract's language,
+    all fields (descriptions, references, categories, criticality
+    and affected party) must be written in English, preserving
+    the exact legal terms as they appear in the original document.
+
 FORMATO DE SALIDA REQUERIDO:
 Para cada elemento identificado, proporciona:
 - Categoría: DERECHO / OBLIGACIÓN / PROHIBICIÓN
 - Parte afectada: ¿A quién aplica?
 - Descripción: Explicación clara del elemento
 - Referencia: Sección o cláusula del contrato donde aparece
-- Criticidad: ALTA / MEDIA / BAJA
+- Criticidad: HIGH / MEDIUM / LOW 
 """,
         expected_output="""Listado completo de:
         - Derechos identificados con sus partes, descripciones y referencias
@@ -192,7 +177,7 @@ ESTRUCTURA JSON REQUERIDA:
     <b>Parte:</b> Nombre de la parte<br>
     <b>Descripción:</b> Descripción del derecho<br>
     <b>Referencia:</b> Cláusula X.Y<br>
-    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+    <b>Criticidad:</b> HIGH/MEDIUM/LOW
   </li>
 </ul>
 
@@ -202,7 +187,7 @@ ESTRUCTURA JSON REQUERIDA:
     <b>Parte:</b> Nombre de la parte<br>
     <b>Descripción:</b> Descripción de la obligación<br>
     <b>Referencia:</b> Cláusula X.Y<br>
-    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+    <b>Criticidad:</b> HIGH/MEDIUM/LOW
   </li>
 </ul>
 
@@ -212,7 +197,7 @@ ESTRUCTURA JSON REQUERIDA:
     <b>Parte:</b> Nombre de la parte<br>
     <b>Descripción:</b> Descripción de la prohibición<br>
     <b>Referencia:</b> Cláusula X.Y<br>
-    <b>Criticidad:</b> ALTA/MEDIA/BAJA
+    <b>Criticidad:</b> HIGH/MEDIUM/LOW
   </li>
 </ul>
 
@@ -254,19 +239,16 @@ def analyze_contract(pdf_content: str) -> str:
         logger.info("🔍 Iniciando análisis de contrato con CrewAI...")
         
         # Crear las tareas en secuencia
-        extraction_task = create_extraction_task(pdf_content)
         analysis_task = create_analysis_task(pdf_content)
         formatting_task = create_formatting_task()
         
         # Crear el Crew con los agentes y tareas
         contract_crew = Crew(
             agents=[
-                pdf_extractor_agent,
                 contract_analyzer_agent,
                 html_formatter_agent
             ],
             tasks=[
-                extraction_task,
                 analysis_task,
                 formatting_task
             ],
@@ -312,10 +294,9 @@ def get_agent_info() -> dict:
     return {
         "agent_name": "contract_analyzer_agent",
         "framework": "CrewAI",
-        "agents_count": 3,
+        "agents_count": 2,
         "agents": [
             contract_analyzer_agent.role,
-            pdf_extractor_agent.role,
             html_formatter_agent.role
         ],
         "capabilities": [

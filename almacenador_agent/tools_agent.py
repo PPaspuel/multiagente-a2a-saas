@@ -53,36 +53,6 @@ class PDFProcessor:
             logger.error(f"✗ Error al extraer texto del PDF: {str(e)}")
             raise ValueError(f"No se pudo procesar el PDF: {str(e)}")
     
-    
-    @staticmethod
-    def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
-        """
-        Divide el texto en fragmentos (chunks) por caracteres.
-        NOTA: Se mantiene como fallback. Se recomienda usar semantic_chunking().
-        
-        Args:
-            text: Texto completo a fragmentar
-            chunk_size: Tamaño máximo de cada fragmento en caracteres
-            overlap: Cantidad de caracteres que se solapan entre fragmentos
-            
-        Returns:
-            List[str]: Lista de fragmentos de texto
-        """
-        chunks = []
-        start = 0
-        text_length = len(text)
-        
-        while start < text_length:
-            end = start + chunk_size
-            chunk = text[start:end]
-            
-            if chunk.strip():
-                chunks.append(chunk)
-            
-            start = end - overlap
-            
-        logger.info(f"✓ Texto fragmentado en {len(chunks)} chunks (método por caracteres)")
-        return chunks
 
     @staticmethod
     def semantic_chunking(text: str, similarity_threshold: float = 0.5) -> List[str]:
@@ -103,7 +73,7 @@ class PDFProcessor:
 
         Returns:
             List[str]: Lista de fragmentos semánticamente coherentes y limpios.
-                       Los chunks vacíos, títulos cortos y numeraciones se descartan.
+                    Los chunks vacíos, títulos cortos y numeraciones se descartan.
 
         Raises:
             ImportError: Si sentence-transformers o nltk no están instalados.
@@ -166,7 +136,7 @@ class PDFProcessor:
         if current_chunk:
             raw_chunks.append(" ".join(current_chunk))
 
-        # ── Limpieza y filtrado de chunks ─────────────────────────────────────────
+        # Limpieza y filtrado de chunks 
         # Elimina prefijos de numeración al inicio: "1.", "I.", "2.1.", "III." etc.
         prefix_pattern = re.compile(
             r"^\s*(?:(?:[IVXLCDMivxlcdm]+|\d+)\.(?:\d+\.)*\s*)"

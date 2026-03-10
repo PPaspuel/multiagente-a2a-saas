@@ -1,0 +1,27 @@
+[
+  {
+    "description": "Contrato de Elsevier para suscripción a software como servicio (SaaS).",
+    "metrics": {
+      "FaithfulnessMetric": {
+        "score": 0.87,
+        "passed": true,
+        "reason": "The score is 0.87 because the actual output contradicts the retrieval context by misrepresenting Elsevier's rights to change terms without reasonable notice, claiming total ownership of content, and suggesting both parties can terminate the agreement at any time, which is not supported by the context."
+      },
+      "AnswerRelevancyMetric": {
+        "score": 1.0,
+        "passed": true,
+        "reason": "The score is 1.00 because the output is perfectly relevant to the input request, with no irrelevant statements present."
+      },
+      "ContextualPrecisionMetric": {
+        "score": 1.0,
+        "passed": true,
+        "reason": "The score is 1.00 because all relevant nodes are ranked higher than the irrelevant nodes. The first three nodes provide essential information regarding rights and obligations, such as the right of Elsevier and the obligations of the Developer, while the fourth node (rank 4) and subsequent nodes do not contribute to the analysis, as they focus on unrelated aspects like press releases and liability disclaimers."
+      },
+      "ContextualRecallMetric": {
+        "score": 0.75,
+        "passed": true,
+        "reason": "The score is 0.75 because while the sentences in the expected output align well with the information from node(s) in retrieval context, they lack specific details regarding the affected part, description, reference, and criticidad, which are necessary for full compliance."
+      }
+    }
+  }
+]

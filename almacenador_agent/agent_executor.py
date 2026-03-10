@@ -11,7 +11,11 @@ VERSIÓN MEJORADA:
 import logging
 import base64
 import json
+import os
 import re
+import time                    
+import csv                    
+from datetime import datetime  
 from typing import Optional, List
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -41,6 +45,16 @@ from almacenador_agent.qdrant_storage import storage_manager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _save_metric(agente, operacion, documento, elapsed, status):
+    file_exists = os.path.exists("metrics.csv")
+    with open("metrics.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp","agente","operacion","documento","tiempo_s","status"])
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            agente, operacion, documento, f"{elapsed:.2f}", status
+        ])
 
 class AlmacenadorAgentExecutor(AgentExecutor):
     """
@@ -353,15 +367,34 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         Maneja el almacenamiento de archivos PDF.
         MEJORADO: Detecta duplicados automáticamente y extrae nombre personalizado.
         """
-        await updater.update_status(
-            TaskState.working,
-            message=updater.new_agent_message([
-                Part(root=TextPart(text="📄 Procesando PDF..."))
-            ])
-        )
-        
+        start_time = time.time()  # Calcular tiempo y guardar métrica
         # Extraer nombre personalizado del usuario
         custom_filename = self._extract_custom_filename(user_text)
+
+        if not custom_filename:
+            error_msg = (
+                "⚠️ *Nombre de documento requerido*\n\n"
+                "Para almacenar un PDF debes especificar un nombre para identificarlo.\n\n"
+                "📌 *Ejemplo de uso correcto:*\n"
+                "  _'Almacena el documento con el nombre contrato_2024.'_\n\n"
+                "Por favor, reenvía tu solicitud incluyendo un nombre para el documento.\n"
+                "No olvides colocar el punto final después del nombre para asegurar que se detecte correctamente.\n"
+                "NOTA: Recuerda que si el documento ya fue almacenado previamente, solo se actualizará su contenido sin crear duplicados,\n"
+                "pero tomará el nombre que le hayas dado en esta solicitud para futuras referencias."
+            )
+            logger.warning("⚠️ El usuario no proporcionó un nombre para el documento")
+            
+            # Primero notifica el error al cliente vía event_queue
+            await event_queue.enqueue_event(new_agent_text_message(error_msg))
+            
+            # Luego cierra la tarea en estado "failed" correctamente
+            await updater.update_status(
+                TaskState.failed,
+                message=updater.new_agent_message([
+                    Part(root=TextPart(text=error_msg))
+                ])
+            )
+            return
         
         # Procesar archivos PDF
         pdf_result = await self._process_pdf_files(user_parts, custom_filename)
@@ -438,6 +471,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             
             await event_queue.enqueue_event(new_agent_text_message(html_response))
             await updater.add_artifact([Part(root=TextPart(text=json_response))])
+
+            # Calcular tiempo y guardar métrica:
+            _save_metric("almacenador", "store_pdf", pdf_result['filename'], 
+                        time.time() - start_time, "success") 
             await updater.complete()
             
         else:
@@ -448,6 +485,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                     Part(root=TextPart(text=error_msg))
                 ])
             )
+
+            # Calcular tiempo y guardar métrica:
+            _save_metric("almacenador", "store_pdf", pdf_result.get('filename','-'),
+                        time.time() - start_time, "error")   
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
     
     
@@ -464,6 +505,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         Formato esperado:
         "Almacena el análisis: <document_id> <contenido del análisis>"
         """
+        start_time = time.time() 
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
@@ -541,6 +583,11 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         
         await event_queue.enqueue_event(new_agent_text_message(html_response))
         await updater.add_artifact([Part(root=TextPart(text=json_response))])
+        
+        # Calcular tiempo y guardar métrica:
+        _save_metric("almacenador", "store_analysis", document_id,
+                    time.time() - start_time, 
+                    "success" if storage_result["status"] == "success" else "error")
         await updater.complete()
     
     
@@ -558,6 +605,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         - "Muestra el análisis del documento <document_id>"
         - "Ver todos los análisis"
         """
+        start_time = time.time() 
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
@@ -570,7 +618,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
         match = re.search(doc_id_pattern, user_text)
         document_id = match.group(1) if match else None
         
-        # ✅ NUEVO: Si no hay UUID, intentar resolver por nombre de archivo
+        # NUEVO: Si no hay UUID, intentar resolver por nombre de archivo
         if not document_id:
             filename_pattern = r'[\w\-]+\.pdf'
             filename_match = re.search(filename_pattern, user_text, re.IGNORECASE)
@@ -623,9 +671,14 @@ class AlmacenadorAgentExecutor(AgentExecutor):
                 "analysis": analysis_list
             }, indent=2, ensure_ascii=False)
 
-        # ✅ Siempre se ejecuta, sin importar si hay análisis o no
+        # Siempre se ejecuta, sin importar si hay análisis o no
         await event_queue.enqueue_event(new_agent_text_message(text_response))
         await updater.add_artifact([Part(root=TextPart(text=json_response))])
+        
+        # Calcular tiempo y guardar métrica:
+        _save_metric("almacenador", "retrieve_analysis", 
+                    document_id if document_id else "todos",
+                    time.time() - start_time, "success")
         await updater.complete()
     
     async def _handle_get_stats(
@@ -634,6 +687,7 @@ class AlmacenadorAgentExecutor(AgentExecutor):
     event_queue: EventQueue,
     user_text: str
     ):
+        start_time = time.time() 
         await updater.update_status(
             TaskState.working,
             message=updater.new_agent_message([
@@ -703,10 +757,16 @@ class AlmacenadorAgentExecutor(AgentExecutor):
 
         await event_queue.enqueue_event(new_agent_text_message(text_response))
         await updater.add_artifact([Part(root=TextPart(text=json.dumps(stats, indent=2, ensure_ascii=False)))])
+        
+        # Calcular tiempo y guardar métrica:
+        _save_metric("almacenador", "get_stats", "-",
+                    time.time() - start_time, "success")
         await updater.complete()
 
 
     async def _handle_get_analyzed_docs(self, updater, event_queue):
+        
+        start_time = time.time() 
         result = storage_manager.get_analyzed_documents()
 
         if result["status"] == "error":
@@ -735,6 +795,10 @@ class AlmacenadorAgentExecutor(AgentExecutor):
             )
 
         await event_queue.enqueue_event(new_agent_text_message(text_response))
+        
+        # Calcular tiempo y guardar métrica:
+        _save_metric("almacenador", "get_analyzed_docs", "-",
+                    time.time() - start_time, "success")
         await updater.complete()
 
 

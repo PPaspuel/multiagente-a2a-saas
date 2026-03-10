@@ -8,6 +8,12 @@ FLUJO DE PROCESO:
 
 import logging
 import re
+import os
+import time                    
+import csv                    
+from datetime import datetime
+import json
+from pathlib import Path 
 from typing import Optional, List, Dict
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -33,6 +39,46 @@ from analisador_agent.qdrant_retriever import QdrantRetriever
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _save_metric(agente, operacion, documento, elapsed, status):
+    file_exists = os.path.exists("metrics.csv")
+    with open("metrics.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp","agente","operacion","documento","tiempo_s","status"])
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            agente, operacion, documento, f"{elapsed:.2f}", status
+        ])
+
+
+def _save_chunks_to_json(retrieval: dict) -> str:
+    """
+    Guarda los chunks filtrados en JSON local.
+    Retorna la ruta del archivo guardado.
+    """
+    output = {
+        "filename":            retrieval["filename"],
+        "document_id":         retrieval["document_id"],
+        "stored_at":           retrieval["stored_at"],
+        "total_chunks_raw":    retrieval["total_chunks_raw"],
+        "num_chunks_filtered": retrieval["num_chunks"],
+        "chunks": [
+            c.strip()
+            for c in retrieval["content"].split("\n\n")
+            if c.strip()
+        ]
+    }
+
+    # Nombre del archivo: chunks_<filename>_<fecha>.json
+    safe_name = retrieval["filename"].replace(".pdf", "").replace(" ", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = Path(f"chunks_{safe_name}_{timestamp}.json")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+
+    return str(output_path)
+
 
 class ContractAnalyzerExecutor(AgentExecutor):
     """
@@ -55,6 +101,7 @@ class ContractAnalyzerExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        start_time = time.time() 
 
         logger.info(f"🚀 Iniciando ejecución del agente analizador")
         logger.info(f"📦 Contexto: task_id={context.task_id}, context_id={context.context_id}")
@@ -111,6 +158,8 @@ class ContractAnalyzerExecutor(AgentExecutor):
                         new_agent_text_message(self._render_available_documents(available))
                     )
                     await updater.complete()
+                    _save_metric("analizador", "no_doc_query", "-",
+                        time.time() - start_time, "no_documento")  
                 else:
                     error_msg = (
                         "❌ No se recibió un PDF adjunto ni se especificó un documento.\n"
@@ -124,6 +173,8 @@ class ContractAnalyzerExecutor(AgentExecutor):
                             Part(root=TextPart(text=error_msg))
                         ])
                     )
+                    _save_metric("analizador", "no_doc_query", "-",
+                        time.time() - start_time, "error")         
                 return
 
             await updater.update_status(
@@ -143,6 +194,8 @@ class ContractAnalyzerExecutor(AgentExecutor):
                     new_agent_text_message(self._render_not_found(doc_query, available))
                 )
                 await updater.complete()
+                _save_metric("analizador", "analyze_contract", doc_query,
+                    time.time() - start_time, "not_found")         
                 return
 
             elif retrieval["status"] == "ambiguous":
@@ -150,6 +203,8 @@ class ContractAnalyzerExecutor(AgentExecutor):
                     new_agent_text_message(self._render_ambiguous(retrieval))
                 )
                 await updater.complete()
+                _save_metric("analizador", "analyze_contract", doc_query,
+                    time.time() - start_time, "ambiguous")        
                 return
 
             elif retrieval["status"] == "error":
@@ -160,6 +215,8 @@ class ContractAnalyzerExecutor(AgentExecutor):
                         Part(root=TextPart(text=error_msg))
                     ])
                 )
+                _save_metric("analizador", "analyze_contract", doc_query,
+                    time.time() - start_time, "error")             
                 return
 
             filename = retrieval["filename"]
@@ -168,6 +225,10 @@ class ContractAnalyzerExecutor(AgentExecutor):
             document_id = retrieval.get("document_id", doc_query) 
             source_info = f"Qdrant — '{filename}' ({num_chunks} chunks)"
             logger.info(f"✅ Documento recuperado: {source_info}")
+
+            # ✅ AGREGAR AQUÍ — una sola línea
+            chunks_file = _save_chunks_to_json(retrieval)
+            logger.info(f"💾 Chunks filtrados guardados en: {chunks_file}")
 
             await updater.update_status(
                 TaskState.working,
@@ -212,6 +273,11 @@ class ContractAnalyzerExecutor(AgentExecutor):
             await updater.add_artifact([
                 Part(root=TextPart(text=final_result))
             ])
+            
+            # ← FALTA ESTO:
+            _save_metric("analizador", "analyze_contract", filename,
+                        time.time() - start_time, "success")
+
             await updater.complete()
             await event_queue.enqueue_event(new_agent_text_message(final_result))
 
@@ -219,6 +285,10 @@ class ContractAnalyzerExecutor(AgentExecutor):
 
         except Exception as e:
             logger.error(f'❌ Error durante la ejecución: {str(e)}', exc_info=True)
+
+            # ← FALTA ESTO:
+            _save_metric("analizador", "analyze_contract", "-",
+                        time.time() - start_time, "error")
 
             error_html = f"""
 <h3>❌ Error en el Análisis</h3>

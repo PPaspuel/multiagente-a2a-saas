@@ -1,20 +1,19 @@
-crewai[tools]
-crewai[a2a]
-python-dotenv
-uvicorn
-google-adk
+google-adk >= 1.22.1
 google-adk[a2a]
-fastapi
-litellm
-langchain
-langchain-openai
 google-adk[extensions]
-PyPDF2
-mcp-server-qdrant
-python-a2a
-langchain-google-genai
+python-dotenv >= 1.1.1
+litellm >= 1.80.15
+uvicorn >= 0.40.0
+python-a2a >= 0.5.10
+PyPDF2 >= 3.0.1
+sentence-transformers >= 5.2.3
+qdrant-client >= 1.16.2
+nltk >= 3.9.2
+crewai >= 1.6.1
+crewai[tools]
+gradio >= 6.8.0
 pytest
-httpx
-qdrant-client
-sentence-transformers
-gradio
+httpx >= 0.28.1
+deepeval >= 3.8.9
+
+pytest >= 9.0.2

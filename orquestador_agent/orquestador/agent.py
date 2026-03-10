@@ -132,7 +132,9 @@ root_agent = LlmAgent(
     • Cuántos análisis están almacenados?
     • Qué documentos tienen análisis?
 
-    NOTA: Para almacenar y/o analizar se debe hacer un documento a la vez."
+    NOTA: Para almacenar y/o analizar se debe hacer un documento a la vez.
+    Recuerda que si el documento ya fue almacenado previamente, 
+    solo se actualizará su contenido sin crear duplicados."
     """,
     sub_agents=[almacenador_agent, analisador_agent],
 )

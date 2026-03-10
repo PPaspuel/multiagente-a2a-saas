@@ -6,3 +6,9 @@ venv/
 **/.adk/
 __pycache__/
 *.pyc
+.pytest_cache/
+.deepeval/
+.gradio/
+metrics.csv
+Chunks/
+Analisis/

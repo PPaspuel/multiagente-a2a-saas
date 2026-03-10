@@ -67,18 +67,56 @@ def create_agent_card(public_url=None):
             ],
         )
         
-        skill_json = AgentSkill(
-            id="json_structured_response",
-            name="Respuestas JSON Estructuradas",
+        skill_semantic_chunking = AgentSkill(
+            id="semantic_chunking",
+            name="Fragmentación Semántica de Texto",
             description=(
-                "Devuelve todas las respuestas en formato JSON estructurado, "
-                "facilitando la integración con otros sistemas y agentes. "
-                "Incluye información detallada sobre el resultado de las operaciones."
+                "Divide el texto extraído de un PDF en fragmentos semánticamente "
+                "coherentes usando similitud coseno entre oraciones consecutivas "
+                "(modelo all-MiniLM-L6-v2). El umbral de similitud es configurable: "
+                "valores altos generan chunks más pequeños y homogéneos, valores bajos "
+                "generan chunks más amplios. Filtra automáticamente títulos, "
+                "numeraciones y fragmentos sin contenido informativo relevante."
             ),
-            tags=["json", "api", "estructurado", "integración"],
+            tags=["chunking", "semántico", "embeddings", "nlp", "sentence-transformers"],
             examples=[
-                "Dame el resultado en formato JSON",
-                "Responde con un JSON estructurado"
+                "Fragmenta este texto en chunks semánticos",
+                "Divide el contrato en secciones coherentes para indexarlo",
+            ],
+        )
+
+        skill_analysis_storage = AgentSkill(
+            id="store_and_retrieve_analysis",
+            name="Almacenamiento y Recuperación de Análisis",
+            description=(
+                "Almacena y recupera análisis de contratos asociados a documentos "
+                "previamente indexados. Permite guardar el resultado de un análisis "
+                "legal vinculado a un document_id, consultarlo posteriormente y "
+                "listar qué documentos tienen análisis disponibles."
+            ),
+            tags=["análisis", "recuperación", "contratos", "qdrant", "historial"],
+            examples=[
+                "Almacena el análisis del contrato con ID a97c3cb5-...",
+                "Dame el análisis del documento a97c3cb5-...",
+                "Qué documentos tienen análisis almacenados?",
+                "Ver el análisis del documento contrato.pdf"
+            ],
+        )
+
+        skill_deduplication = AgentSkill(
+            id="document_deduplication",
+            name="Deduplicación de Documentos",
+            description=(
+                "Antes de almacenar un documento, verifica si ya existe en la "
+                "colección Qdrant mediante su huella digital (hash SHA-256). "
+                "Si el documento ya fue indexado, elimina los chunks anteriores "
+                "y los reemplaza con los nuevos, evitando duplicados sin perder "
+                "trazabilidad del documento original."
+            ),
+            tags=["deduplicación", "sha256", "hash", "actualización", "qdrant"],
+            examples=[
+                "Actualiza el documento contrato.pdf que ya fue almacenado",
+                "Guarda este PDF aunque ya exista una versión anterior",
             ],
         )
         
@@ -87,21 +125,27 @@ def create_agent_card(public_url=None):
             name="almacenador_agent",
             description=(
                 "Agente especializado en el procesamiento y almacenamiento de documentos PDF. "
-                "Extrae texto de PDFs, lo fragmenta inteligentemente, y lo almacena en "
-                "una base de datos vectorial Qdrant para permitir búsquedas semánticas. "
+                "Extrae texto de PDFs, lo fragmenta semánticamente con all-MiniLM-L6-v2, "
+                "lo almacena en Qdrant con deduplicación por SHA-256, y gestiona el "
+                "almacenamiento y recuperación de análisis de contratos."
             ),
-            url=public_url,  # ⭐ USAR LA URL PÚBLICA
+            url=public_url,
             version='2.0.0',
             default_input_modes=[
                 'text/plain',           # Texto plano
                 'application/pdf'       # Archivos PDF
             ],
             default_output_modes=[
-                'application/json',     # Respuestas JSON
                 'text/html'             # Respuestas HTML para visualización
             ],
             capabilities=capabilities,
-            skills=[skill_extract, skill_store, skill_json],
+            skills=[
+                skill_extract,
+                skill_store,
+                skill_semantic_chunking,
+                skill_analysis_storage,
+                skill_deduplication,
+            ],
         )
         
         return agent_card
@@ -120,7 +164,6 @@ def main():
         host = os.getenv('HOST', '0.0.0.0')
         port = int(os.getenv('PORT', 8001))
         
-        # ⭐ IMPORTANTE: Obtener la URL pública
         # Si está en localhost, usar localhost
         # Si está en una red, usar la IP local o dominio público
         public_url = os.getenv('PUBLIC_URL', f'http://localhost:{port}')

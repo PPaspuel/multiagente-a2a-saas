@@ -3,6 +3,9 @@ import sys
 import os
 import warnings
 import uuid as _uuid
+import time                    
+import csv                     
+from datetime import datetime  
 
 # ── Silenciar warnings ────────────────────────────────────────────────────────
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
@@ -85,6 +88,21 @@ def handle_pdf_upload(file) -> str:
 # ──────────────────────────────────────────
 # 3. Función principal del agente
 # ──────────────────────────────────────────
+# ← AGREGAR ESTA FUNCIÓN COMPLETA
+def _save_metric(agente: str, operacion: str, documento: str, elapsed: float, status: str):
+    file_exists = os.path.exists("metrics.csv")
+    with open("metrics.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "agente", "operacion", "documento", "tiempo_s", "status"])
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            agente,
+            operacion,
+            documento,
+            f"{elapsed:.2f}",
+            status
+        ])
 
 async def agent_response_with_pdf(message: str, history: list):
     """
@@ -102,6 +120,7 @@ async def agent_response_with_pdf(message: str, history: list):
         Iterar todos los eventos sin break y recolectar todos los textos
         no vacíos. Al final usar el último texto con sustancia (> 20 chars).
     """
+    start_time = time.time()
     global _uploaded_pdf_path
 
     # Validación de mensaje vacío 
@@ -169,7 +188,16 @@ async def agent_response_with_pdf(message: str, history: list):
         response_so_far += word + " "
         yield response_so_far.rstrip()
 
-
+    elapsed = time.time() - start_time
+    
+    _save_metric(
+        agente="orquestador",
+        operacion=message[:50],
+        documento=os.path.basename(_uploaded_pdf_path) if _uploaded_pdf_path else "-",
+        elapsed=elapsed,
+        status="success" if collected_texts else "empty"
+    )
+    
 # ──────────────────────────────────────────
 # 4. Construcción de la UI
 # ──────────────────────────────────────────
